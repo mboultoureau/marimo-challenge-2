@@ -9,3 +9,5 @@
 | https://www.alphaxiv.org/abs/2506.10943 | Self-Adapting Language Models (model self tuning itself) |
 | https://www.alphaxiv.org/abs/2506.21734 | Hierarchical Reasoning Model (new architecture executing sequential tasks with stability and efficiency) |
 | https://www.alphaxiv.org/abs/2502.03387 | LIMO: Less is More for Reasoning (if we choose strategically samples we can perform better results with only 1% of training data)  |
+
+The selected paper is: [Back to Basics: Let Denoising Generative Models Denoise](https://www.alphaxiv.org/abs/2511.13720)
