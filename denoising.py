@@ -24,17 +24,6 @@ def _():
     return T, mo, plt, torch, torchvision
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    Documentation:
-    - Paper: https://www.alphaxiv.org/abs/2511.13720
-    - Video review of the paper: https://www.youtube.com/watch?v=u5yKZzTTEHo
-    - Traditional technic used: https://www.youtube.com/watch?v=iv-5mZ_9CPY
-    """)
-    return
-
-
 @app.cell
 def _(mo):
     # Options for dataset
@@ -73,8 +62,8 @@ def _(T, mo, resolution, torchvision):
 @app.cell
 def _(categories, mo):
     category_selection = mo.ui.dropdown(
-        options=categories, 
-        value=categories[0], 
+        options=categories,
+        value=categories[0],
         label="Select Category"
     )
 
@@ -109,12 +98,12 @@ def _(
     # Image grid
     if images:
         grid = torchvision.utils.make_grid(torch.stack(images), nrow=4, padding=2)
-    
+
         plt.figure(figsize=(10, 5))
         plt.imshow(grid.permute(1, 2, 0))
         plt.axis('off')
         plt.title(f"Samples for category: {category_selection.value}")
-    
+
         result = mo.as_html(plt.gca().get_figure())
     else:
         result = mo.md("No images found for this category.")
