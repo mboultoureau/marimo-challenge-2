@@ -12,3 +12,8 @@ dependencies = [
     "pydantic-ai-slim>=2.0.0",
     "torchvision>=0.27.1",
 ]
+license = {file = "LICENSE"}
+authors = [
+    {name = "Mathis Boultoureau", email = "contact@mboultoureau.com"},
+    {name = "vctr-dng", email = "94930828+vctr-dng@users.noreply.github.com"}
+]
