@@ -1,5 +1,7 @@
 # Study Guide
 
+You will find the complete list of resources in the [resources.md](resources.md) file.
+
 ## Suggested Reading Order
 
 ### Theory-first
