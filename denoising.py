@@ -18,7 +18,6 @@ def _():
     import torch
     import torchvision
     import torchvision.transforms as T
-    from torchvision.datasets import ImageFolder
     import matplotlib.pyplot as plt
 
     return T, mo, plt, torch, torchvision
@@ -28,7 +27,9 @@ def _():
 def _(mo):
     # Options for dataset
     # TODO: Add local ImageNet support (like the paper)
-    resolution = mo.ui.slider(start=32, stop=256, step=32, value=128, label="Resolution")
+    resolution = mo.ui.slider(
+        start=32, stop=256, step=32, value=128, label="Resolution"
+    )
 
     mo.md(f"### Dataset Settings\n{resolution}")
     return (resolution,)
@@ -37,15 +38,17 @@ def _(mo):
 @app.cell
 def _(T, mo, resolution, torchvision):
     # Import and transform dataset
-    transform = T.Compose([
-        T.Resize(resolution.value),
-        T.CenterCrop(resolution.value),
-        T.ToTensor(),
-    ])
+    transform = T.Compose(
+        [
+            T.Resize(resolution.value),
+            T.CenterCrop(resolution.value),
+            T.ToTensor(),
+        ]
+    )
 
     try:
         dataset = torchvision.datasets.CIFAR10(
-            root='./data', train=True, download=True, transform=transform
+            root="./data", train=True, download=True, transform=transform
         )
         categories = dataset.classes
         data_ready = True
@@ -62,9 +65,7 @@ def _(T, mo, resolution, torchvision):
 @app.cell
 def _(categories, mo):
     category_selection = mo.ui.dropdown(
-        options=categories,
-        value=categories[0],
-        label="Select Category"
+        options=categories, value=categories[0], label="Select Category"
     )
 
     num_samples = mo.ui.number(
@@ -101,7 +102,7 @@ def _(
 
         plt.figure(figsize=(10, 5))
         plt.imshow(grid.permute(1, 2, 0))
-        plt.axis('off')
+        plt.axis("off")
         plt.title(f"Samples for category: {category_selection.value}")
 
         result = mo.as_html(plt.gca().get_figure())
