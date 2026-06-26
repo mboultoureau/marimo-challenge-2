@@ -9,20 +9,20 @@ A Marimo notebook implementation exploring the principles discussed in the paper
 
 ## Setup
 
+The Python virtual environment is managed with [uv](https://docs.astral.sh/uv/).
+
+Refer to [uv installation instructions](https://docs.astral.sh/uv/getting-started/installation/) to install it.
+
+Create the virtual environment with all the necessary dependencies :
 ```bash
-# Create the virtual environment
-python3 -m venv .venv
-
-# Activate on Linux/macOS
-source .venv/bin/activate
-
-# Activate on Windows
-.venv\Scripts\activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Edit the notebook
-marimo edit denoising.py
+uv sync
 ```
+
+Run the marimo notebook:
+```bash
+uv run marimo run denoising.py
+```
+
+## Contributing
+
+A pre-commit hook configuration is provided.

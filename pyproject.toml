@@ -1,0 +1,19 @@
+[project]
+name = "marimo-challenge-2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-genai>=2.10.0",
+    "ipykernel>=7.3.0",
+    "marimo>=0.23.10",
+    "matplotlib>=3.11.0",
+    "pydantic-ai-slim>=2.0.0",
+    "torchvision>=0.27.1",
+]
+license = {file = "LICENSE"}
+authors = [
+    {name = "Mathis Boultoureau", email = "contact@mboultoureau.com"},
+    {name = "vctr-dng", email = "94930828+vctr-dng@users.noreply.github.com"}
+]
