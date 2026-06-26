@@ -9,3 +9,9 @@ repos:
       - id: check-yaml
       - id: check-merge-conflict
       - id: mixed-line-ending
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff-check
+        args: [ --fix ]
+      - id: ruff-format
