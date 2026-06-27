@@ -204,6 +204,46 @@ def denoise_snapshot(model, data_D, t_value, noise_scale=NOISE_SCALE):
     return x.cpu().numpy(), z_t.cpu().numpy(), x_pred.cpu().numpy()
 
 
+# %% Corruption process preview data
+preview_data_2d = generate_swiss_roll_2d(N_SAMPLES, noise=DATASET_NOISE, seed=SEED)
+preview_D = D_VALUES[0]
+preview_projection = make_projection(preview_D, d=2, seed=preview_D)
+preview_count = N_SAMPLES
+preview_clean_2d = preview_data_2d[:preview_count]
+preview_clean_D = project_to_ambient(preview_clean_2d, preview_projection)
+
+rng = np.random.default_rng(SEED)
+preview_eps_D = rng.standard_normal(preview_clean_D.shape).astype(np.float32) * NOISE_SCALE
+preview_t_values = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+preview_corrupted_2d = {}
+
+for t_value in preview_t_values:
+    z_t = t_value * preview_clean_D + (1 - t_value) * preview_eps_D
+    preview_corrupted_2d[t_value] = project_back_to_2d(z_t, preview_projection)
+
+
+fig_corrupt, axes_corrupt = plt.subplots(2, 3, figsize=(12, 8))
+preview_lim = max(np.abs(preview_clean_2d).max() * 1.3, 3.0)
+
+for ax, t_value in zip(axes_corrupt.flat, preview_t_values[::-1]):
+    points_2d = np.clip(preview_corrupted_2d[t_value], -preview_lim * 2, preview_lim * 2)
+    ax.scatter(points_2d[:, 0], points_2d[:, 1], s=2, alpha=0.5, c="tab:purple")
+    ax.set_title(f"z_t at t={t_value:.2f}")
+    ax.set_xlim(-preview_lim, preview_lim)
+    ax.set_ylim(-preview_lim, preview_lim)
+    ax.set_aspect("equal")
+    ax.tick_params(labelbottom=False, labelleft=False)
+
+fig_corrupt.suptitle(
+    f"Corruption Process in 2D View (D={preview_D}, noise_scale={NOISE_SCALE})",
+    fontsize=16,
+    fontweight="bold",
+    y=1.01,
+)
+fig_corrupt.tight_layout()
+plt.show()
+
+
 # %% Run experiment
 torch.manual_seed(SEED)
 np.random.seed(SEED)
