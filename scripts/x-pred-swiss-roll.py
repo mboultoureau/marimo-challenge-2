@@ -1,34 +1,32 @@
 # %% Imports
 from dataclasses import dataclass
-import math
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 from sklearn.datasets import make_swiss_roll
+from tqdm.auto import tqdm, trange
 
 
 # %% Config
 SEED = 67
 N_SAMPLES = 10_000
-DATASET_NOISE = 0.5
-D_VALUES = [2]
+DATASET_NOISE = 0.2
+D_VALUES = [2, 3, 4, 8]
 
 HIDDEN = 256
 N_LAYERS = 5
-TIME_EMBED_DIM = 256
-TIME_MAX_PERIOD = 10_000
 TRAIN_STEPS = 5_000
 BATCH_SIZE = 256
 LR = 1e-3
 
 T_MEAN = -0.8
 T_STD = 0.8
-T_EPS = 0.05
-NOISE_SCALE = 1.0
+# A smaller corruption scale is easier for the planar Swiss-roll debug case.
+NOISE_SCALE = 0.25
 
-SAMPLER = "heun"
+SAMPLER = "euler"
 SAMPLING_STEPS = 50
 NUM_GENERATED = 2_000
 
@@ -64,54 +62,16 @@ def project_back_to_2d(data_D, projection):
 
 
 class DenoisingMLP(nn.Module):
-    def __init__(
-        self,
-        dim,
-        hidden=256,
-        n_layers=5,
-        time_embed_dim=TIME_EMBED_DIM,
-        time_max_period=TIME_MAX_PERIOD,
-    ):
+    def __init__(self, dim, hidden=256, n_layers=5):
         super().__init__()
-        self.time_embed_dim = time_embed_dim
-        self.time_max_period = time_max_period
-        self.input_proj = nn.Linear(dim, hidden)
-        self.time_mlp = nn.Sequential(
-            nn.Linear(time_embed_dim, hidden),
-            nn.SiLU(),
-            nn.Linear(hidden, hidden),
-        )
-
-        hidden_layers = []
+        layers = [nn.Linear(dim + 1, hidden), nn.ReLU()]
         for _ in range(n_layers - 2):
-            hidden_layers.extend([nn.Linear(hidden, hidden), nn.ReLU()])
-        self.hidden_net = nn.Sequential(*hidden_layers)
-        self.output_proj = nn.Linear(hidden, dim)
-
-    @staticmethod
-    def timestep_embedding(t, dim, max_period=10_000):
-        half = dim // 2
-        freqs = torch.exp(
-            -math.log(max_period)
-            * torch.arange(start=0, end=half, dtype=torch.float32, device=t.device)
-            / max(half, 1)
-        )
-        args = t.float() * freqs[None]
-        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        if dim % 2:
-            embedding = torch.cat(
-                [embedding, torch.zeros_like(embedding[:, :1])], dim=-1
-            )
-        return embedding
+            layers.extend([nn.Linear(hidden, hidden), nn.ReLU()])
+        layers.append(nn.Linear(hidden, dim))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, z_t, t):
-        t_freq = self.timestep_embedding(t, self.time_embed_dim, self.time_max_period)
-        t_emb = self.time_mlp(t_freq)
-
-        hidden = self.input_proj(z_t) + t_emb
-        hidden = torch.relu(hidden)
-        hidden = self.hidden_net(hidden)
-        return self.output_proj(hidden)
+        return self.net(torch.cat([z_t, t], dim=-1))
 
 
 @dataclass
@@ -133,41 +93,38 @@ def train_xpred_model(
     device,
     hidden=HIDDEN,
     n_layers=N_LAYERS,
-    time_embed_dim=TIME_EMBED_DIM,
-    time_max_period=TIME_MAX_PERIOD,
     n_steps=TRAIN_STEPS,
     batch_size=BATCH_SIZE,
     lr=LR,
     t_mean=T_MEAN,
     t_std=T_STD,
-    t_eps=T_EPS,
     noise_scale=NOISE_SCALE,
+    progress_desc=None,
 ):
     projection_t = torch.from_numpy(projection).to(device)
     x_all = torch.from_numpy(data_2d).to(device) @ projection_t.T
 
-    model = DenoisingMLP(
-        D,
-        hidden=hidden,
-        n_layers=n_layers,
-        time_embed_dim=time_embed_dim,
-        time_max_period=time_max_period,
-    ).to(device)
+    model = DenoisingMLP(D, hidden=hidden, n_layers=n_layers).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     losses = []
 
-    for step in range(n_steps):
+    step_iter = trange(
+        n_steps,
+        desc=progress_desc or f"Train D={D}",
+        leave=False,
+        dynamic_ncols=True,
+    )
+    for step in step_iter:
         idx = torch.randint(0, x_all.shape[0], (batch_size,), device=device)
         x = x_all[idx]
         eps = torch.randn_like(x) * noise_scale
         t = sample_t(batch_size, device, mean=t_mean, std=t_std)
 
         z_t = t * x + (1 - t) * eps
-        denom = (1 - t).clamp(min=t_eps)
-        v_true = (x - z_t) / denom
+        v_true = x - eps
 
         x_pred = model(z_t, t)
-        v_pred = (x_pred - z_t) / denom
+        v_pred = (x_pred - z_t) / (1 - t)
 
         loss = ((v_pred - v_true) ** 2).mean()
 
@@ -176,7 +133,9 @@ def train_xpred_model(
         optimizer.step()
 
         if step % 50 == 0:
-            losses.append(float(loss.item()))
+            loss_value = float(loss.item())
+            losses.append(loss_value)
+            step_iter.set_postfix(loss=f"{loss_value:.4f}")
 
     model.eval()
     return TrainResult(model=model, losses=losses, projection=projection)
@@ -189,14 +148,13 @@ def generate_samples_xpred(
     n_samples=NUM_GENERATED,
     n_steps=SAMPLING_STEPS,
     solver=SAMPLER,
-    t_eps=T_EPS,
     noise_scale=NOISE_SCALE,
 ):
     device = next(model.parameters()).device
     z = torch.randn(n_samples, D, device=device) * noise_scale
 
     def velocity(pred, z_t, t):
-        return (pred - z_t) / (1 - t).clamp(min=t_eps)
+        return (pred - z_t) / (1 - t)
 
     def euler_step(z_t, t, t_next):
         pred = model(z_t, t)
@@ -254,9 +212,30 @@ data_2d = generate_swiss_roll_2d(N_SAMPLES, noise=DATASET_NOISE, seed=SEED)
 
 results = {}
 generated_samples = {}
+one_step_noisy = {}
+one_step_denoised = {}
 
-for D in D_VALUES:
-    print(f"Training x-pred Swiss roll with D={D}")
+gt_preview_count = min(N_SAMPLES, max(NUM_GENERATED, 5_000))
+gt_subset = data_2d[: min(NUM_GENERATED, N_SAMPLES)]
+lim = max(np.abs(gt_subset).max() * 1.3, 3.0)
+
+fig_gt, ax_gt = plt.subplots(figsize=(3, 3))
+ax_gt.scatter(
+    data_2d[:gt_preview_count, 0],
+    data_2d[:gt_preview_count, 1],
+    s=2,
+    alpha=0.5,
+    c="black",
+)
+ax_gt.set_xlim(-lim, lim)
+ax_gt.set_ylim(-lim, lim)
+ax_gt.set_aspect("equal")
+ax_gt.set_title("Ground Truth Swiss Roll")
+ax_gt.tick_params(labelbottom=False, labelleft=False)
+fig_gt.tight_layout()
+plt.show()
+
+for D in tqdm(D_VALUES, desc="Sweep dimensions", dynamic_ncols=True):
     projection = make_projection(D, d=2, seed=D)
     result = train_xpred_model(
         D,
@@ -265,15 +244,13 @@ for D in D_VALUES:
         DEVICE,
         hidden=HIDDEN,
         n_layers=N_LAYERS,
-        time_embed_dim=TIME_EMBED_DIM,
-        time_max_period=TIME_MAX_PERIOD,
         n_steps=TRAIN_STEPS,
         batch_size=BATCH_SIZE,
         lr=LR,
         t_mean=T_MEAN,
         t_std=T_STD,
-        t_eps=T_EPS,
         noise_scale=NOISE_SCALE,
+        progress_desc=f"Train D={D}",
     )
     results[D] = result
 
@@ -283,58 +260,76 @@ for D in D_VALUES:
         n_samples=NUM_GENERATED,
         n_steps=SAMPLING_STEPS,
         solver=SAMPLER,
-        t_eps=T_EPS,
         noise_scale=NOISE_SCALE,
     )
     generated_samples[D] = project_back_to_2d(samples_D, result.projection)
+
+    data_D = project_to_ambient(gt_subset, projection)
+    _x_clean, z_noisy, x_pred = denoise_snapshot(
+        result.model,
+        data_D,
+        t_value=0.5,
+        noise_scale=NOISE_SCALE,
+    )
+    one_step_noisy[D] = project_back_to_2d(z_noisy, projection)
+    one_step_denoised[D] = project_back_to_2d(x_pred, projection)
 
 for D in D_VALUES:
     final_loss = results[D].losses[-1]
     print(f"D={D}: final logged loss={final_loss:.6f}")
 
-fig, axes = plt.subplots(len(D_VALUES), 3, figsize=(12, 4 * len(D_VALUES)))
+fig_denoise, axes_denoise = plt.subplots(
+    2, len(D_VALUES), figsize=(4 * len(D_VALUES), 8)
+)
 if len(D_VALUES) == 1:
-    axes = np.array([axes])
+    axes_denoise = np.array(axes_denoise).reshape(2, 1)
 
-gt_subset = data_2d[:NUM_GENERATED]
-lim = max(np.abs(gt_subset).max() * 1.3, 3.0)
+for col, D in enumerate(D_VALUES):
+    noisy_2d = np.clip(one_step_noisy[D], -lim * 2, lim * 2)
+    denoised_2d = np.clip(one_step_denoised[D], -lim * 2, lim * 2)
 
-for row, D in enumerate(D_VALUES):
-    projection = results[D].projection
-    data_D = project_to_ambient(gt_subset, projection)
-    x_clean, z_noisy, x_pred = denoise_snapshot(
-        results[D].model,
-        data_D,
-        t_value=0.5,
-        noise_scale=NOISE_SCALE,
+    axes_denoise[0, col].scatter(
+        noisy_2d[:, 0], noisy_2d[:, 1], s=1, alpha=0.5, c="tab:orange"
     )
+    axes_denoise[0, col].set_title(f"Noisy input (D={D})")
 
-    axes[row, 0].scatter(gt_subset[:, 0], gt_subset[:, 1], s=1, alpha=0.5, c="black")
-    axes[row, 0].set_title("Ground truth" if row == 0 else "")
-    axes[row, 0].set_ylabel(f"D = {D}", fontsize=14, fontweight="bold")
-
-    samples_2d = np.clip(generated_samples[D], -lim * 2, lim * 2)
-    axes[row, 1].scatter(
-        samples_2d[:, 0], samples_2d[:, 1], s=1, alpha=0.5, c="tab:blue"
+    axes_denoise[1, col].scatter(
+        denoised_2d[:, 0], denoised_2d[:, 1], s=1, alpha=0.5, c="tab:green"
     )
-    axes[row, 1].set_title("Generated samples" if row == 0 else "")
+    axes_denoise[1, col].set_title(f"Denoised output (D={D})")
 
-    x_pred_2d = project_back_to_2d(x_pred, projection)
-    axes[row, 2].scatter(
-        x_pred_2d[:, 0], x_pred_2d[:, 1], s=1, alpha=0.5, c="tab:green"
-    )
-    axes[row, 2].set_title("One-step denoise (t=0.5)" if row == 0 else "")
+    for row in range(2):
+        axes_denoise[row, col].set_xlim(-lim, lim)
+        axes_denoise[row, col].set_ylim(-lim, lim)
+        axes_denoise[row, col].set_aspect("equal")
+        axes_denoise[row, col].tick_params(labelbottom=False, labelleft=False)
 
-    for col in range(3):
-        axes[row, col].set_xlim(-lim, lim)
-        axes[row, col].set_ylim(-lim, lim)
-        axes[row, col].set_aspect("equal")
-        axes[row, col].tick_params(labelbottom=False, labelleft=False)
-
-fig.suptitle("x-pred Swiss Roll Debugger", fontsize=16, fontweight="bold", y=1.01)
-fig.tight_layout()
+fig_denoise.suptitle(
+    "One-Step Denoise at t=0.5", fontsize=16, fontweight="bold", y=1.01
+)
+fig_denoise.tight_layout()
 plt.show()
 
+fig_samples, axes_samples = plt.subplots(
+    1, len(D_VALUES), figsize=(4 * len(D_VALUES), 4)
+)
+if len(D_VALUES) == 1:
+    axes_samples = [axes_samples]
+
+for i, D in enumerate(D_VALUES):
+    samples_2d = np.clip(generated_samples[D], -lim * 2, lim * 2)
+    axes_samples[i].scatter(
+        samples_2d[:, 0], samples_2d[:, 1], s=1, alpha=0.5, c="tab:blue"
+    )
+    axes_samples[i].set_title(f"Generated samples (D={D})")
+    axes_samples[i].set_xlim(-lim, lim)
+    axes_samples[i].set_ylim(-lim, lim)
+    axes_samples[i].set_aspect("equal")
+    axes_samples[i].tick_params(labelbottom=False, labelleft=False)
+
+fig_samples.suptitle("Generated Samples", fontsize=16, fontweight="bold", y=1.01)
+fig_samples.tight_layout()
+plt.show()
 
 fig_loss, axes_loss = plt.subplots(1, len(D_VALUES), figsize=(4 * len(D_VALUES), 4))
 if len(D_VALUES) == 1:
