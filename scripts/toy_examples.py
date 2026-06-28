@@ -47,8 +47,7 @@ def _(mo):
     mo.md(r"""
     # Back to Basics: Let Denoising Generative Models Denoise
 
-    **Reproducing the Toy Experiment (Section 3.3, Figure 2)**
-    from [Li & He, 2025](https://arxiv.org/abs/2511.13720)
+    From Li & He, 2025 ([arXiv:2511.13720](https://arxiv.org/abs/2511.13720))
 
     ---
 
@@ -104,7 +103,8 @@ def _(D_values, mo):
         [
             mo.md("## Choose dataset"),
             mo.hstack([dataset_dropdown, n_samples, seed]),
-        ]
+        ],
+        align="center",
     )
     return (
         circles_factor,
@@ -187,7 +187,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(D_values, mo, pred_types):
+def _(D_values, mo):
     hidden_width = mo.ui.number(
         start=64, stop=1024, step=64, value=256, label="Hidden width", disabled=True
     )
@@ -205,20 +205,30 @@ def _(D_values, mo, pred_types):
         label="Sampler",
     )
     train_btn = mo.ui.run_button(label="Train all models")
-    mo.md(
-        f"""
-        ## Run the experiment
 
-        Trains {len(D_values) * len(pred_types)} models: {len(D_values)} ambient dimension{"" if len(D_values) < 2 else "s"} x {len(pred_types)} prediction types ($x$-prediction, $\epsilon$-prediction, $v$-prediction).
+    D_values_str = ", ".join(f"{D}" for D in D_values)
+    # Trains {len(D_values) * len(pred_types)} models: {len(D_values)} ambient dimension{"" if len(D_values) < 2 else "s"} x {len(pred_types)} prediction types.
+    mo.vstack(
+        [
+            mo.md(
+                f"""
+            ## Run the experiment
 
-        {hidden_width}
+            For each prediction type ($x$, $\epsilon$ and $v$) we will train one model for each of the {D_values_str} ambient dimensions.
 
-        {t_eps}
-
-        {solver}
-
-        {train_btn}
-        """
+            ---
+            """
+            ),
+            mo.hstack(
+                [
+                    hidden_width,
+                    t_eps,
+                    solver,
+                ]
+            ),
+            train_btn,
+        ],
+        align="center",
     )
     return hidden_width, solver, t_eps, train_btn
 
@@ -262,6 +272,7 @@ def _(
                     total=n_steps,
                     title=_pred_type,
                     remove_on_exit=True,
+                    subtitle="Jitting training...",
                 ) as step_bar:
                     _model, _losses = train_model(
                         _pred_type,
@@ -285,7 +296,7 @@ def _(D_values, colors, mo, plt, pred_labels, results):
     pred_colors = {k: colors[k] for k in ["x_pred", "eps_pred", "v_pred"]}
 
     fig_loss, axes_loss = plt.subplots(
-        len(D_values), 1, figsize=(6, 3 * len(D_values)), squeeze=False
+        len(D_values), 1, figsize=(12, 3 * len(D_values)), squeeze=False, sharex=True
     )
 
     for _i, _D in enumerate(D_values):
@@ -300,12 +311,14 @@ def _(D_values, colors, mo, plt, pred_labels, results):
                 alpha=0.8,
             )
         _ax.set_title(f"D = {_D}")
+        _ax.set_xlim(0, None)
         _ax.set_yscale("log")
         _ax.set_ylabel("v-loss")
-        _ax.legend(fontsize=8)
+        _ax.legend(loc="upper right")
         if _i == len(D_values) - 1:
             _ax.set_xlabel("Step (x50)")
-
+    # _handles, _labels = axes_loss[0, 0].get_legend_handles_labels()
+    # fig_loss.legend(_handles, _labels, loc="right")
     fig_loss.tight_layout()
     mo.vstack(
         [
@@ -440,6 +453,13 @@ def _(
         )
 
     def _setup_ax(_ax, _title=None, _ylabel=None):
+        if _title:
+            _string = _title.split("$")[1]
+            _title = f"$\mathbf{{{_string}}}$-prediction"
+        if _ylabel:
+            _string = _ylabel.split("$")[1]
+            _ylabel = f"$\mathbf{{{_string}}}$"
+
         _ax.scatter(
             data_preview[:, 0],
             data_preview[:, 1],
@@ -449,9 +469,9 @@ def _(
             zorder=1,
         )
         if _title:
-            _ax.set_title(_title)
+            _ax.set_title(_title, fontsize=20)
         if _ylabel:
-            _ax.set_ylabel(_ylabel, fontsize=16)
+            _ax.set_ylabel(_ylabel, fontsize=20, rotation=0, labelpad=15)
         _ax.set_xlim(-_lim, _lim)
         _ax.set_ylim(-_lim, _lim)
         _ax.set_aspect("equal")
@@ -498,8 +518,10 @@ def _(
 
         The velocity field $v_\theta(z_t, t)$ drives the sampling ODE $dz_t/dt = v_\theta(z_t, t)$.
 
-        Rows: derived quantity ($\hat{x}$, $\hat{\epsilon}$, $\hat{v}$). Columns: network prediction type.
+        Rows: derived quantity ($\hat{x}$, $\hat{\epsilon}$, $\hat{v}$). Columns: network prediction type.<br>
         $\hat{x}$ shown as scatter points, $\hat{\epsilon}$ and $\hat{v}$ as unit vector fields colored by magnitude.
+
+        ---
         """),
             mo.vstack(
                 [
@@ -806,10 +828,7 @@ def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
         return scan_chunk
 
     pred_types = ["x_pred", "eps_pred", "v_pred"]
-    _scan_fns = {
-        pt: _make_scan_chunk(pt, _optimizer, 256)
-        for pt in pred_types
-    }
+    _scan_fns = {pt: _make_scan_chunk(pt, _optimizer, 256) for pt in pred_types}
 
     def train_model(
         pred_type,
@@ -954,7 +973,6 @@ def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
         n_sample_steps,
         n_steps,
         pred_labels,
-        pred_types,
         train_model,
     )
 
