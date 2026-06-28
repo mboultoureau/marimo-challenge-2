@@ -2,7 +2,9 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #     "marimo>=0.23.10",
-#     "torch>=2.0.0",
+#     "jax[cuda13]>=0.10.2",
+#     "equinox>=0.13.8",
+#     "optax>=0.2.8",
 #     "scikit-learn>=1.4.0",
 #     "matplotlib>=3.8.0",
 #     "numpy>=1.26.0",
@@ -17,25 +19,26 @@ app = marimo.App(width="medium", app_title="Diffusion model toy examples")
 
 @app.cell(hide_code=True)
 def _():
-    import copy
-
     import marimo as mo
     import numpy as np
-    import torch
-    import torch.nn as nn
+    import jax
+    import jax.numpy as jnp
+    import equinox as eqx
+    import optax
     import matplotlib.pyplot as plt
     from sklearn.datasets import make_swiss_roll, make_moons, make_circles
 
     return (
-        copy,
+        eqx,
+        jax,
+        jnp,
         make_circles,
         make_moons,
         make_swiss_roll,
         mo,
-        nn,
         np,
+        optax,
         plt,
-        torch,
     )
 
 
@@ -91,7 +94,7 @@ def _(D_values, mo):
     noise_scale = mo.ui.slider(
         start=0.05,
         stop=1.0,
-        step=0.05,
+        step=0.01,
         value=0.3,
         label="Noise scale $\sigma$",
         show_value=True,
@@ -224,9 +227,10 @@ def _(D_values, mo, pred_types):
 def _(
     D_values,
     data_preview,
-    device,
     hidden_width,
+    jax,
     make_projection,
+    master_key,
     mo,
     n_steps,
     noise_scale,
@@ -241,6 +245,7 @@ def _(
 
     results = {}
     projections = {}
+    _train_key = master_key
 
     with mo.status.progress_bar(
         total=len(D_values) * len(pred_labels),
@@ -252,6 +257,7 @@ def _(
             projections[_D] = _P
 
             for _pred_type, _pred_label in pred_labels.items():
+                _train_key, _model_key = jax.random.split(_train_key)
                 with mo.status.progress_bar(
                     total=n_steps,
                     title=_pred_type,
@@ -262,7 +268,7 @@ def _(
                         _D,
                         data_2d,
                         _P,
-                        device,
+                        _model_key,
                         n_steps=n_steps,
                         hidden=int(hidden_width.value),
                         t_eps=t_eps.value,
@@ -525,14 +531,14 @@ def _(data_preview, mo):
 @app.cell(hide_code=True)
 def _(
     data_preview,
-    device,
+    jax,
+    jnp,
     mo,
     n_sample_steps,
     np,
     pred_labels,
     results,
     t_eps,
-    torch,
     vf_grid_res,
 ):
     _res = int(vf_grid_res.value)
@@ -552,35 +558,34 @@ def _(
         title="Precomputing prediction grid",
         remove_on_exit=True,
     ) as _bar:
-        with torch.no_grad():
-            _z_t = torch.from_numpy(_grid).to(device)
-            for _t_val in _t_values:
-                _t_key = round(_t_val, 4)
-                _t_tensor = torch.full((_grid.shape[0], 1), _t_val, device=device)
-                for _pred_type in pred_labels:
-                    _pred = results[(2, _pred_type)]["model"](_z_t, _t_tensor)
-                    if _pred_type == "x_pred":
-                        _x_hat = _pred
-                        _eps_hat = (_z_t - _t_tensor * _x_hat) / (1 - _t_tensor).clamp(
-                            min=_t_eps
-                        )
-                        _v_hat = (_x_hat - _z_t) / (1 - _t_tensor).clamp(min=_t_eps)
-                    elif _pred_type == "eps_pred":
-                        _eps_hat = _pred
-                        _x_hat = (_z_t - (1 - _t_tensor) * _eps_hat) / _t_tensor.clamp(
-                            min=_t_eps
-                        )
-                        _v_hat = (_z_t - _eps_hat) / _t_tensor.clamp(min=_t_eps)
-                    else:
-                        _v_hat = _pred
-                        _x_hat = (1 - _t_tensor) * _v_hat + _z_t
-                        _eps_hat = _z_t - _t_tensor * _v_hat
-                    vf_cache[(_t_key, _pred_type)] = {
-                        "x": _x_hat.cpu().numpy(),
-                        "eps": _eps_hat.cpu().numpy(),
-                        "v": _v_hat.cpu().numpy(),
-                    }
-                    _bar.update(increment=1)
+        _z_t = jnp.array(_grid)
+        for _t_val in _t_values:
+            _t_key = round(_t_val, 4)
+            _t_tensor = jnp.full((_grid.shape[0], 1), _t_val)
+            for _pred_type in pred_labels:
+                _pred = jax.vmap(results[(2, _pred_type)]["model"])(_z_t, _t_tensor)
+                if _pred_type == "x_pred":
+                    _x_hat = _pred
+                    _eps_hat = (_z_t - _t_tensor * _x_hat) / jnp.maximum(
+                        1 - _t_tensor, _t_eps
+                    )
+                    _v_hat = (_x_hat - _z_t) / jnp.maximum(1 - _t_tensor, _t_eps)
+                elif _pred_type == "eps_pred":
+                    _eps_hat = _pred
+                    _x_hat = (_z_t - (1 - _t_tensor) * _eps_hat) / jnp.maximum(
+                        _t_tensor, _t_eps
+                    )
+                    _v_hat = (_z_t - _eps_hat) / jnp.maximum(_t_tensor, _t_eps)
+                else:
+                    _v_hat = _pred
+                    _x_hat = (1 - _t_tensor) * _v_hat + _z_t
+                    _eps_hat = _z_t - _t_tensor * _v_hat
+                vf_cache[(_t_key, _pred_type)] = {
+                    "x": np.asarray(_x_hat),
+                    "eps": np.asarray(_eps_hat),
+                    "v": np.asarray(_v_hat),
+                }
+                _bar.update(increment=1)
     return vf_cache, vf_grid_lim
 
 
@@ -589,6 +594,8 @@ def _(
     D_values,
     gen_samples,
     generate_samples,
+    jax,
+    master_key,
     n_sample_steps,
     noise_scale,
     pred_labels,
@@ -599,9 +606,11 @@ def _(
 ):
     _n = int(gen_samples.value)
     trajectories = {}
+    _sample_key = master_key
     for _D in D_values:
         _P = projections[_D]
         for _pred_type in pred_labels:
+            _sample_key, _model_key = jax.random.split(_sample_key)
             _traj_D = generate_samples(
                 results[(_D, _pred_type)]["model"],
                 _pred_type,
@@ -612,6 +621,7 @@ def _(
                 t_eps=t_eps.value,
                 noise_scale=noise_scale.value,
                 return_trajectory=True,
+                key=_model_key,
             )
             trajectories[(_D, _pred_type)] = [_snap @ _P for _snap in _traj_D]
     return (trajectories,)
@@ -693,7 +703,7 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(copy, make_circles, make_moons, make_swiss_roll, nn, np, torch):
+def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
     def generate_2d_data(
         name,
         n_samples=10000,
@@ -727,24 +737,86 @@ def _(copy, make_circles, make_moons, make_swiss_roll, nn, np, torch):
         Q, _ = np.linalg.qr(M)
         return Q[:, :d].astype(np.float32)
 
-    class DenoisingMLP(nn.Module):
-        def __init__(self, dim, hidden=256, n_layers=5):
-            super().__init__()
-            layers = [nn.Linear(dim + 1, hidden), nn.ReLU()]
-            for _ in range(n_layers - 2):
-                layers.extend([nn.Linear(hidden, hidden), nn.ReLU()])
-            layers.append(nn.Linear(hidden, dim))
-            self.net = nn.Sequential(*layers)
+    class DenoisingMLP(eqx.Module):
+        layers: list
 
-        def forward(self, z_t, t):
-            return self.net(torch.cat([z_t, t], dim=-1))
+        def __init__(self, dim, hidden=256, n_layers=5, *, key):
+            keys = jax.random.split(key, n_layers)
+            self.layers = [eqx.nn.Linear(dim + 1, hidden, key=keys[0])]
+            for i in range(1, n_layers - 1):
+                self.layers.append(eqx.nn.Linear(hidden, hidden, key=keys[i]))
+            self.layers.append(eqx.nn.Linear(hidden, dim, key=keys[n_layers - 1]))
+
+        def __call__(self, z_t, t):
+            x = jnp.concatenate([z_t, t], axis=-1)
+            for layer in self.layers[:-1]:
+                x = jax.nn.relu(layer(x))
+            return self.layers[-1](x)
+
+    _T_MEAN = -0.8
+    _T_STD = 0.8
+    _CHUNK_SIZE = 50
+    _optimizer = optax.adam(1e-3)
+
+    def _make_scan_chunk(pred_type, optimizer, batch_size):
+        @eqx.filter_jit
+        def scan_chunk(carry, x_all, keys, noise_scale, t_eps):
+            def scan_body(carry, key_i):
+                model, opt_state, best_model_arrays, best_loss = carry
+                k_idx, k_eps, k_t = jax.random.split(key_i, 3)
+
+                idx = jax.random.randint(k_idx, (batch_size,), 0, x_all.shape[0])
+                x = x_all[idx]
+                eps = jax.random.normal(k_eps, x.shape) * noise_scale
+                logit_t = jax.random.normal(k_t, (x.shape[0], 1)) * _T_STD + _T_MEAN
+                t = jax.nn.sigmoid(logit_t)
+                z_t = t * x + (1 - t) * eps
+
+                def loss_fn(model):
+                    pred = jax.vmap(model)(z_t, t)
+                    if pred_type == "x_pred":
+                        denom = jnp.maximum(1 - t, t_eps)
+                        v_true = (x - z_t) / denom
+                        v_pred = (pred - z_t) / denom
+                    elif pred_type == "eps_pred":
+                        v_true = x - eps
+                        v_pred = (z_t - pred) / jnp.maximum(t, t_eps)
+                    else:
+                        v_true = x - eps
+                        v_pred = pred
+                    return jnp.mean((v_pred - v_true) ** 2)
+
+                loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
+                updates, opt_state = optimizer.update(grads, opt_state, model)
+                model = eqx.apply_updates(model, updates)
+
+                improved = loss < best_loss
+                best_loss = jnp.where(improved, loss, best_loss)
+                model_arrays = eqx.filter(model, eqx.is_array)
+                best_model_arrays = jax.tree.map(
+                    lambda new, old: jnp.where(improved, new, old),
+                    model_arrays,
+                    best_model_arrays,
+                )
+
+                return (model, opt_state, best_model_arrays, best_loss), loss
+
+            return jax.lax.scan(scan_body, carry, keys)
+
+        return scan_chunk
+
+    pred_types = ["x_pred", "eps_pred", "v_pred"]
+    _scan_fns = {
+        pt: _make_scan_chunk(pt, _optimizer, 256)
+        for pt in pred_types
+    }
 
     def train_model(
         pred_type,
         D,
         data_preview,
         P,
-        device,
+        key,
         n_steps=5000,
         batch_size=256,
         lr=1e-3,
@@ -753,63 +825,44 @@ def _(copy, make_circles, make_moons, make_swiss_roll, nn, np, torch):
         noise_scale=1.0,
         step_bar=None,
     ):
-        P_t = torch.from_numpy(P).to(device)
-        x_all = torch.from_numpy(data_preview).to(device) @ P_t.T
+        P_jax = jnp.array(P)
+        x_all = jnp.array(data_preview) @ P_jax.T
 
-        model = DenoisingMLP(D, hidden=hidden).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        key, model_key, scan_key = jax.random.split(key, 3)
+        model = DenoisingMLP(D, hidden=hidden, key=model_key)
+        opt_state = _optimizer.init(eqx.filter(model, eqx.is_array))
+
+        all_keys = jax.random.split(scan_key, n_steps)
+        n_chunks = n_steps // _CHUNK_SIZE
+
+        best_arrays = eqx.filter(model, eqx.is_array)
+        carry = (model, opt_state, best_arrays, jnp.array(float("inf")))
         losses = []
-        best_loss = float("inf")
-        best_state = None
 
-        for step in range(n_steps):
-            idx = torch.randint(0, x_all.shape[0], (batch_size,), device=device)
-            x = x_all[idx]
-            eps = torch.randn_like(x) * noise_scale
+        scan_fn = _scan_fns[pred_type]
+        _ns = jnp.array(noise_scale)
+        _te = jnp.array(t_eps)
 
-            logit_t = torch.randn(batch_size, 1, device=device) * 0.8 + (-0.8)
-            t = torch.sigmoid(logit_t)
+        for chunk_i in range(n_chunks):
+            chunk_keys = all_keys[chunk_i * _CHUNK_SIZE : (chunk_i + 1) * _CHUNK_SIZE]
+            carry, chunk_losses = scan_fn(carry, x_all, chunk_keys, _ns, _te)
+            loss_val = float(chunk_losses[-1])
+            losses.append(loss_val)
+            if step_bar is not None:
+                best_loss_val = float(carry[3])
+                step_bar.update(
+                    increment=_CHUNK_SIZE,
+                    subtitle=f"loss={loss_val:.4f} (best={best_loss_val:.4f})",
+                )
 
-            z_t = t * x + (1 - t) * eps
-            pred = model(z_t, t)
+        model, _, best_arrays, _ = carry
+        best_model = eqx.combine(best_arrays, model)
+        return best_model, losses
 
-            if pred_type == "x_pred":
-                denom = (1 - t).clamp(min=t_eps)
-                v_true = (x - z_t) / denom
-                v_pred = (pred - z_t) / denom
-            elif pred_type == "eps_pred":
-                v_true = x - eps
-                v_pred = (z_t - pred) / t.clamp(min=t_eps)
-            else:
-                v_true = x - eps
-                v_pred = pred
+    @eqx.filter_jit
+    def _model_batch_eval(model, z_t, t):
+        return jax.vmap(model)(z_t, t)
 
-            loss = ((v_pred - v_true) ** 2).mean()
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            if step % 50 == 0:
-                loss_val = loss.item()
-                losses.append(loss_val)
-                if loss_val < best_loss:
-                    best_loss = loss_val
-                    best_state = copy.deepcopy(model.state_dict())
-                if step_bar is not None:
-                    step_bar.update(
-                        increment=50 if step > 0 else 1,
-                        subtitle=f"loss={loss_val:.4f} (best={best_loss:.4f})",
-                    )
-
-        if step_bar is not None:
-            step_bar.update(increment=n_steps - (len(losses) - 1) * 50)
-
-        model.load_state_dict(best_state)
-        model.eval()
-        return model, losses
-
-    @torch.no_grad()
     def generate_samples(
         model,
         pred_type,
@@ -820,72 +873,65 @@ def _(copy, make_circles, make_moons, make_swiss_roll, nn, np, torch):
         t_eps=0.05,
         noise_scale=1.0,
         return_trajectory=False,
+        key=None,
     ):
-        device = next(model.parameters()).device
-        z = torch.randn(n_samples, D, device=device) * noise_scale
-        trajectory = [z.cpu().numpy()] if return_trajectory else None
+        if key is None:
+            key = jax.random.PRNGKey(0)
+        z = jax.random.normal(key, (n_samples, D)) * noise_scale
+        trajectory = [np.asarray(z)] if return_trajectory else None
 
-        def velocity(pred, z_t, t):
+        def velocity(pred, z_t, t_val):
             if pred_type == "x_pred":
-                return (pred - z_t) / (1 - t).clamp(min=t_eps)
+                return (pred - z_t) / jnp.maximum(1 - t_val, t_eps)
             if pred_type == "eps_pred":
-                return (z_t - pred) / t.clamp(min=t_eps)
+                return (z_t - pred) / jnp.maximum(t_val, t_eps)
             return pred
 
-        def euler_step(z_t, t, t_next):
-            pred = model(z_t, t)
-            v = velocity(pred, z_t, t)
-            return z_t + (t_next - t) * v
+        def euler_step(z_t, t_val, t_next_val):
+            t_arr = jnp.full((z_t.shape[0], 1), t_val)
+            pred = _model_batch_eval(model, z_t, t_arr)
+            v = velocity(pred, z_t, t_val)
+            return z_t + (t_next_val - t_val) * v
 
-        def heun_step(z_t, t, t_next):
-            pred_t = model(z_t, t)
-            v_t = velocity(pred_t, z_t, t)
-
-            z_euler = z_t + (t_next - t) * v_t
-            pred_next = model(z_euler, t_next)
-            v_next = velocity(pred_next, z_euler, t_next)
-
-            return z_t + (t_next - t) * 0.5 * (v_t + v_next)
+        def heun_step(z_t, t_val, t_next_val):
+            t_arr = jnp.full((z_t.shape[0], 1), t_val)
+            t_next_arr = jnp.full((z_t.shape[0], 1), t_next_val)
+            pred_t = _model_batch_eval(model, z_t, t_arr)
+            v_t = velocity(pred_t, z_t, t_val)
+            z_euler = z_t + (t_next_val - t_val) * v_t
+            pred_next = _model_batch_eval(model, z_euler, t_next_arr)
+            v_next = velocity(pred_next, z_euler, t_next_val)
+            return z_t + (t_next_val - t_val) * 0.5 * (v_t + v_next)
 
         if solver not in {"euler", "heun"}:
             raise ValueError(f"Unsupported solver: {solver}")
 
-        if solver == "euler":
-            for i in range(n_steps):
-                t = torch.full((n_samples, 1), i / n_steps, device=device)
-                t_next = torch.full((n_samples, 1), (i + 1) / n_steps, device=device)
-                z = euler_step(z, t, t_next)
-                if return_trajectory:
-                    trajectory.append(z.cpu().numpy())
-        else:
-            for i in range(n_steps - 1):
-                t = torch.full((n_samples, 1), i / n_steps, device=device)
-                t_next = torch.full((n_samples, 1), (i + 1) / n_steps, device=device)
-                z = heun_step(z, t, t_next)
-                if return_trajectory:
-                    trajectory.append(z.cpu().numpy())
+        step_fn = heun_step if solver == "heun" else euler_step
 
-            t = torch.full((n_samples, 1), (n_steps - 1) / n_steps, device=device)
-            t_next = torch.full((n_samples, 1), 1.0, device=device)
-            z = euler_step(z, t, t_next)
+        for i in range(n_steps):
+            t_val = i / n_steps
+            t_next_val = (i + 1) / n_steps
+            if solver == "heun" and i == n_steps - 1:
+                z = euler_step(z, t_val, t_next_val)
+            else:
+                z = step_fn(z, t_val, t_next_val)
             if return_trajectory:
-                trajectory.append(z.cpu().numpy())
+                trajectory.append(np.asarray(z))
 
         if return_trajectory:
             return trajectory
-        return z.cpu().numpy()
+        return np.asarray(z)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    master_key = jax.random.PRNGKey(67)
     D_values = [
         2,
         3,
         # 8,
-        # 16,
-        # 512,
+        16,
+        512,
     ]
-    n_steps = 5000
+    n_steps = 10000
     n_sample_steps = 50
-    pred_types = ["x_pred", "eps_pred", "v_pred"]
     pred_labels = {
         "x_pred": "$x$-prediction",
         "eps_pred": r"$\epsilon$-prediction",
@@ -901,10 +947,10 @@ def _(copy, make_circles, make_moons, make_swiss_roll, nn, np, torch):
     return (
         D_values,
         colors,
-        device,
         generate_2d_data,
         generate_samples,
         make_projection,
+        master_key,
         n_sample_steps,
         n_steps,
         pred_labels,
