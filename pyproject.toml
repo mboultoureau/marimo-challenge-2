@@ -17,6 +17,10 @@ dependencies = [
     "tqdm>=4.67.1",
     "torchvision>=0.27.1",
     "umap-learn>=0.5.12",
+    "ipywidgets>=8.1.8",
+    "jax[cuda13]>=0.10.2",
+    "equinox>=0.13.8",
+    "optax>=0.2.8",
 ]
 license = {file = "LICENSE"}
 authors = [

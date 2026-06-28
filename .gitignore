@@ -1,6 +1,3 @@
-# Marimo specific
-__marimo__
-
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -224,3 +221,5 @@ __marimo__/
 
 # Project specific
 data/
+# Added by code-review-graph
+.code-review-graph/
