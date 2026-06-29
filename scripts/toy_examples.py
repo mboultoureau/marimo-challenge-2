@@ -68,12 +68,22 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
-def _(D_values, mo):
+def _(mo):
     dataset_dropdown = mo.ui.dropdown(
         options={
             "Swiss Roll": "swiss_roll",
             "Two Moons": "two_moons",
             "Concentric Circles": "circles",
+            "Torus": "torus",
+            "Möbius Strip": "mobius",
+            "Trefoil Knot": "trefoil",
+            "Helix": "helix",
+            "Double Helix": "double_helix",
+            "Catenoid": "catenoid",
+            "Saddle": "saddle",
+            "Gabriel's Horn": "horn",
+            "Clifford Torus": "clifford",
+            "Klein Bottle": "klein",
         },
         value="Swiss Roll",
         label="Dataset",
@@ -84,11 +94,6 @@ def _(D_values, mo):
     seed = mo.ui.number(start=0, stop=9999, step=1, value=67, label="Seed")
     circles_factor = mo.ui.slider(
         start=0.0, stop=0.99, step=0.01, value=0.5, label="Circles factor"
-    )
-    noise_d_dropdown = mo.ui.dropdown(
-        options={str(value): value for value in D_values},
-        value=str(D_values[0]),
-        label="Ambient dimension",
     )
     noise_scale = mo.ui.slider(
         start=0.05,
@@ -106,23 +111,253 @@ def _(D_values, mo):
         ],
         align="center",
     )
-    return (
-        circles_factor,
-        dataset_dropdown,
-        n_samples,
-        noise_d_dropdown,
-        noise_scale,
-        seed,
+    return circles_factor, dataset_dropdown, n_samples, noise_scale, seed
+
+
+@app.cell(hide_code=True)
+def _(D_values_all, dataset_dropdown, mo):
+    _3d_datasets = {
+        "torus",
+        "mobius",
+        "trefoil",
+        "helix",
+        "double_helix",
+        "catenoid",
+        "saddle",
+        "horn",
+        "clifford",
+        "klein",
+    }
+    data_dim = 3 if dataset_dropdown.value in _3d_datasets else 2
+    D_values = [D for D in D_values_all if D >= data_dim]
+    noise_d_dropdown = mo.ui.dropdown(
+        options={str(value): value for value in D_values},
+        value=str(D_values[0]),
+        label="Ambient dimension",
     )
+    return D_values, data_dim, noise_d_dropdown
+
+
+@app.cell(hide_code=True)
+def _(dataset_dropdown, mo, np):
+    _ds = dataset_dropdown.value
+    if _ds == "torus":
+        manifold_params = mo.ui.dictionary(
+            {
+                "R": mo.ui.slider(
+                    start=0.5,
+                    stop=3.0,
+                    step=0.1,
+                    value=1.5,
+                    label="Major radius R",
+                    show_value=True,
+                ),
+                "r": mo.ui.slider(
+                    start=0.1,
+                    stop=1.5,
+                    step=0.1,
+                    value=0.5,
+                    label="Minor radius r",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "mobius":
+        manifold_params = mo.ui.dictionary(
+            {
+                "n_twists": mo.ui.slider(
+                    start=1,
+                    stop=5,
+                    step=1,
+                    value=1,
+                    label="Half-twists",
+                    show_value=True,
+                ),
+                "strip_width": mo.ui.slider(
+                    start=0.2,
+                    stop=1.5,
+                    step=0.1,
+                    value=0.5,
+                    label="Strip width",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "helix":
+        manifold_params = mo.ui.dictionary(
+            {
+                "turns": mo.ui.slider(
+                    start=1, stop=10, step=1, value=4, label="Turns", show_value=True
+                ),
+                "radius": mo.ui.slider(
+                    start=0.3,
+                    stop=2.0,
+                    step=0.1,
+                    value=1.0,
+                    label="Radius",
+                    show_value=True,
+                ),
+                "pitch": mo.ui.slider(
+                    start=0.2,
+                    stop=2.0,
+                    step=0.1,
+                    value=0.5,
+                    label="Pitch",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "double_helix":
+        manifold_params = mo.ui.dictionary(
+            {
+                "turns": mo.ui.slider(
+                    start=1, stop=10, step=1, value=4, label="Turns", show_value=True
+                ),
+                "radius": mo.ui.slider(
+                    start=0.3,
+                    stop=2.0,
+                    step=0.1,
+                    value=1.0,
+                    label="Radius",
+                    show_value=True,
+                ),
+                "pitch": mo.ui.slider(
+                    start=0.2,
+                    stop=2.0,
+                    step=0.1,
+                    value=0.5,
+                    label="Pitch",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "catenoid":
+        manifold_params = mo.ui.dictionary(
+            {
+                "height": mo.ui.slider(
+                    start=0.5,
+                    stop=3.0,
+                    step=0.1,
+                    value=1.5,
+                    label="Height",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "saddle":
+        manifold_params = mo.ui.dictionary(
+            {
+                "extent": mo.ui.slider(
+                    start=1.0,
+                    stop=5.0,
+                    step=0.5,
+                    value=2.0,
+                    label="Extent",
+                    show_value=True,
+                ),
+                "curvature": mo.ui.slider(
+                    start=0.1,
+                    stop=2.0,
+                    step=0.1,
+                    value=0.5,
+                    label="Curvature",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "horn":
+        manifold_params = mo.ui.dictionary(
+            {
+                "length": mo.ui.slider(
+                    start=1.0,
+                    stop=20.0,
+                    step=0.5,
+                    value=8.0,
+                    label="Length",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "clifford":
+        manifold_params = mo.ui.dictionary(
+            {
+                "r1": mo.ui.slider(
+                    start=0.3,
+                    stop=2.0,
+                    step=0.1,
+                    value=1.0,
+                    label="Radius r₁",
+                    show_value=True,
+                ),
+                "r2": mo.ui.slider(
+                    start=0.3,
+                    stop=2.0,
+                    step=0.1,
+                    value=1.0,
+                    label="Radius r₂",
+                    show_value=True,
+                ),
+                "angle": mo.ui.slider(
+                    start=0.0,
+                    stop=round(float(np.pi), 2),
+                    step=0.05,
+                    value=round(float(np.pi / 4), 2),
+                    label="4D rotation angle",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "klein":
+        manifold_params = mo.ui.dictionary(
+            {
+                "neck": mo.ui.slider(
+                    start=1.0,
+                    stop=8.0,
+                    step=0.5,
+                    value=4.0,
+                    label="Neck width",
+                    show_value=True,
+                ),
+                "body": mo.ui.slider(
+                    start=3.0,
+                    stop=10.0,
+                    step=0.5,
+                    value=6.0,
+                    label="Body size",
+                    show_value=True,
+                ),
+                "height": mo.ui.slider(
+                    start=8.0,
+                    stop=24.0,
+                    step=1.0,
+                    value=16.0,
+                    label="Height",
+                    show_value=True,
+                ),
+                "angle": mo.ui.slider(
+                    start=0.0,
+                    stop=round(float(2 * np.pi), 2),
+                    step=0.05,
+                    value=0.0,
+                    label="4D rotation angle",
+                    show_value=True,
+                ),
+            }
+        )
+    else:
+        manifold_params = mo.ui.dictionary({})
+    return (manifold_params,)
 
 
 @app.cell(hide_code=True)
 def _(
     circles_factor,
     colors,
+    data_dim,
     data_preview,
     dataset_dropdown,
     dataset_noise,
+    manifold_params,
     mo,
     noise_d_dropdown,
     noise_scale,
@@ -132,35 +367,76 @@ def _(
     time_slider,
 ):
     _controls = [dataset_noise]
-    _fig_size = (3, 3)
+    _fig_size = (4, 4)
     if dataset_dropdown.value == "circles":
         _controls.append(circles_factor)
+    if manifold_params.value:
+        _controls.append(manifold_params)
 
     _D = noise_d_dropdown.value
     _t = round(time_slider.value, 4)
-    _z_t_2d = noised_cache[(_D, _t)]
+    _z_t = noised_cache[(_D, _t)]
 
     _lim_clean = np.abs(data_preview).max() * 1.2
-    _lim_noisy = np.abs(_z_t_2d).max() * 1.2
+    _lim_noisy = np.abs(_z_t).max() * 1.2
 
-    _fig_clean, _ax_clean = plt.subplots(figsize=_fig_size)
-    _ax_clean.scatter(
-        data_preview[:, 0], data_preview[:, 1], s=2, alpha=0.5, c=colors["ground_truth"]
-    )
-    _ax_clean.set_xlim(-_lim_clean, _lim_clean)
-    _ax_clean.set_ylim(-_lim_clean, _lim_clean)
-    _ax_clean.set_aspect("equal")
-    _ax_clean.set_xticks([])
-    _ax_clean.set_yticks([])
+    if data_dim == 3:
+        _fig_clean = plt.figure(figsize=_fig_size)
+        _ax_clean = _fig_clean.add_subplot(111, projection="3d")
+        _ax_clean.scatter(
+            data_preview[:, 0],
+            data_preview[:, 1],
+            data_preview[:, 2],
+            s=2,
+            alpha=0.5,
+            c=colors["ground_truth"],
+        )
+        _ax_clean.set_xticks([])
+        _ax_clean.set_yticks([])
+        _ax_clean.set_zticks([])
+
+        _fig_noisy = plt.figure(figsize=_fig_size)
+        _ax_noisy = _fig_noisy.add_subplot(111, projection="3d")
+        _ax_noisy.scatter(
+            _z_t[:, 0],
+            _z_t[:, 1],
+            _z_t[:, 2],
+            s=2,
+            alpha=0.5,
+            c=colors["noising"],
+        )
+        _ax_noisy.set_xticks([])
+        _ax_noisy.set_yticks([])
+        _ax_noisy.set_zticks([])
+    else:
+        _fig_clean, _ax_clean = plt.subplots(figsize=_fig_size)
+        _ax_clean.scatter(
+            data_preview[:, 0],
+            data_preview[:, 1],
+            s=2,
+            alpha=0.5,
+            c=colors["ground_truth"],
+        )
+        _ax_clean.set_xlim(-_lim_clean, _lim_clean)
+        _ax_clean.set_ylim(-_lim_clean, _lim_clean)
+        _ax_clean.set_aspect("equal")
+        _ax_clean.set_xticks([])
+        _ax_clean.set_yticks([])
+
+        _fig_noisy, _ax_noisy = plt.subplots(figsize=_fig_size)
+        _ax_noisy.scatter(
+            _z_t[:, 0],
+            _z_t[:, 1],
+            s=2,
+            alpha=0.5,
+            c=colors["noising"],
+        )
+        _ax_noisy.set_xlim(-_lim_noisy, _lim_noisy)
+        _ax_noisy.set_ylim(-_lim_noisy, _lim_noisy)
+        _ax_noisy.set_aspect("equal")
+        _ax_noisy.set_xticks([])
+        _ax_noisy.set_yticks([])
     _fig_clean.tight_layout()
-
-    _fig_noisy, _ax_noisy = plt.subplots(figsize=_fig_size)
-    _ax_noisy.scatter(_z_t_2d[:, 0], _z_t_2d[:, 1], s=2, alpha=0.5, c=colors["noising"])
-    _ax_noisy.set_xlim(-_lim_noisy, _lim_noisy)
-    _ax_noisy.set_ylim(-_lim_noisy, _lim_noisy)
-    _ax_noisy.set_aspect("equal")
-    _ax_noisy.set_xticks([])
-    _ax_noisy.set_yticks([])
     _fig_noisy.tight_layout()
 
     mo.vstack(
@@ -236,6 +512,7 @@ def _(D_values, mo):
 @app.cell(hide_code=True)
 def _(
     D_values,
+    data_dim,
     data_preview,
     hidden_width,
     jax,
@@ -263,7 +540,7 @@ def _(
         subtitle=f"Dimension {D_values[0]}",
     ) as main_bar:
         for _D in D_values:
-            _P = make_projection(_D, d=2, seed=_D)
+            _P = make_projection(_D, d=data_dim, seed=_D)
             projections[_D] = _P
 
             for _pred_type, _pred_label in pred_labels.items():
@@ -334,6 +611,7 @@ def _(D_values, colors, mo, plt, pred_labels, results):
 def _(
     D_values,
     colors,
+    data_dim,
     data_preview,
     dataset_dropdown,
     gen_samples,
@@ -349,8 +627,13 @@ def _(
     _t = round(time_slider.value, 4)
     _step = round(_t * n_sample_steps)
 
+    _subplot_kw = {"projection": "3d"} if data_dim == 3 else {}
     fig, axes = plt.subplots(
-        len(D_values), 4, figsize=(3 * 4, 3 * len(D_values)), squeeze=False
+        len(D_values),
+        4,
+        figsize=(4 * 4, 4 * len(D_values)),
+        squeeze=False,
+        subplot_kw=_subplot_kw,
     )
 
     _rng = np.random.default_rng(0)
@@ -360,35 +643,31 @@ def _(
     gt_subset = data_preview[_idx]
     lim = max(np.abs(data_preview).max() * 1.3, 3.0)
 
-    for _row, _D in enumerate(D_values):
-        axes[_row, 0].scatter(
-            gt_subset[:, 0], gt_subset[:, 1], s=1, alpha=0.5, c=colors["ground_truth"]
-        )
-        axes[_row, 0].set_title("Ground Truth" if _row == 0 else "")
-        axes[_row, 0].set_ylabel(f"D = {_D}")
-        axes[_row, 0].set_xlim(-lim, lim)
-        axes[_row, 0].set_ylim(-lim, lim)
-        axes[_row, 0].set_aspect("equal")
-        axes[_row, 0].set_xticks([])
-        axes[_row, 0].set_yticks([])
-
-        for _col, (_pred_type, _pred_label) in enumerate(pred_labels.items()):
-            _ax = axes[_row, _col + 1]
-            _samples_2d = trajectories[(_D, _pred_type)][_step]
-            _samples_clip = np.clip(_samples_2d, -lim * 2, lim * 2)
-            _ax.scatter(
-                _samples_clip[:, 0],
-                _samples_clip[:, 1],
-                s=1,
-                alpha=0.5,
-                c=colors[_pred_type],
-            )
-            _ax.set_title(_pred_label if _row == 0 else "")
+    def _scatter(_ax, _data, _color):
+        if data_dim == 3:
+            _ax.scatter(_data[:, 0], _data[:, 1], _data[:, 2], s=1, alpha=0.5, c=_color)
+            _ax.set_xticks([])
+            _ax.set_yticks([])
+            _ax.set_zticks([])
+        else:
+            _ax.scatter(_data[:, 0], _data[:, 1], s=1, alpha=0.5, c=_color)
             _ax.set_xlim(-lim, lim)
             _ax.set_ylim(-lim, lim)
             _ax.set_aspect("equal")
             _ax.set_xticks([])
             _ax.set_yticks([])
+
+    for _row, _D in enumerate(D_values):
+        _scatter(axes[_row, 0], gt_subset, colors["ground_truth"])
+        axes[_row, 0].set_title("Ground Truth" if _row == 0 else "")
+        axes[_row, 0].set_ylabel(f"D = {_D}")
+
+        for _col, (_pred_type, _pred_label) in enumerate(pred_labels.items()):
+            _ax = axes[_row, _col + 1]
+            _samples = trajectories[(_D, _pred_type)][_step]
+            _samples_clip = np.clip(_samples, -lim * 2, lim * 2)
+            _scatter(_ax, _samples_clip, colors[_pred_type])
+            _ax.set_title(_pred_label if _row == 0 else "")
 
     fig.tight_layout()
     mo.vstack(
@@ -408,6 +687,7 @@ def _(
 @app.cell(hide_code=True)
 def _(
     colors,
+    data_dim,
     data_preview,
     mo,
     np,
@@ -418,6 +698,13 @@ def _(
     vf_grid_lim,
     vf_grid_res,
 ):
+    mo.stop(
+        data_dim > 2,
+        mo.callout(
+            "Vector field visualization is only available for 2D datasets.",
+            kind="warn",
+        ),
+    )
     _t = round(time_slider.value, 4)
     _res = int(vf_grid_res.value)
     _lim = vf_grid_lim
@@ -552,6 +839,7 @@ def _(data_preview, mo):
 
 @app.cell(hide_code=True)
 def _(
+    data_dim,
     data_preview,
     jax,
     jnp,
@@ -563,6 +851,7 @@ def _(
     t_eps,
     vf_grid_res,
 ):
+    mo.stop(data_dim > 2)
     _res = int(vf_grid_res.value)
     _t_eps = t_eps.value
     _t_values = np.linspace(0.0, 1.0, n_sample_steps + 1)
@@ -676,6 +965,16 @@ def _(dataset_dropdown, mo):
         "swiss_roll": (0.0, 4.0, 0.01, 0.2),
         "two_moons": (0.0, 0.5, 0.005, 0.1),
         "circles": (0.0, 0.2, 0.001, 0.005),
+        "torus": (0.0, 0.5, 0.01, 0.1),
+        "mobius": (0.0, 0.5, 0.01, 0.1),
+        "trefoil": (0.0, 1.0, 0.01, 0.2),
+        "helix": (0.0, 0.5, 0.01, 0.1),
+        "double_helix": (0.0, 0.5, 0.01, 0.1),
+        "catenoid": (0.0, 0.5, 0.01, 0.1),
+        "saddle": (0.0, 1.0, 0.01, 0.2),
+        "horn": (0.0, 0.5, 0.01, 0.05),
+        "clifford": (0.0, 0.3, 0.01, 0.05),
+        "klein": (0.0, 5.0, 0.1, 1.0),
     }
     _start, _stop, _step, _value = _noise_configs.get(
         dataset_dropdown.value, (0.0, 4.0, 0.01, 0.2)
@@ -690,22 +989,25 @@ def _(dataset_dropdown, mo):
 def _(
     D_values,
     circles_factor,
+    data_dim,
     dataset_dropdown,
     dataset_noise,
-    generate_2d_data,
+    generate_data,
     make_projection,
+    manifold_params,
     n_sample_steps,
     n_samples,
     noise_scale,
     np,
     seed,
 ):
-    data_preview = generate_2d_data(
+    data_preview = generate_data(
         dataset_dropdown.value,
         n_samples=int(n_samples.value),
         seed=int(seed.value),
         noise=dataset_noise.value,
         circles_factor=circles_factor.value,
+        manifold_params=manifold_params.value,
     )
 
     _t_values = np.linspace(0.0, 1.0, n_sample_steps + 1)
@@ -713,7 +1015,7 @@ def _(
 
     noised_cache = {}
     for _D in D_values:
-        _P = make_projection(_D, d=2, seed=_D)
+        _P = make_projection(_D, d=data_dim, seed=_D)
         _data_D = data_preview @ _P.T
         _rng = np.random.default_rng(0)
         _eps = _rng.standard_normal(_data_D.shape).astype(np.float32) * _ns
@@ -726,14 +1028,16 @@ def _(
 
 @app.cell(hide_code=True)
 def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
-    def generate_2d_data(
+    def generate_data(
         name,
         n_samples=10000,
         seed=42,
         noise=0.5,
         circles_factor=0.5,
+        manifold_params=None,
     ):
         rng = np.random.default_rng(seed)
+        _mp = manifold_params or {}
         if name == "swiss_roll":
             X_3d, _ = make_swiss_roll(
                 n_samples, noise=noise, random_state=seed, hole=False
@@ -748,6 +1052,127 @@ def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
                 factor=circles_factor,
                 random_state=seed,
             )
+        elif name == "torus":
+            u = rng.uniform(0, 2 * np.pi, n_samples)
+            v = rng.uniform(0, 2 * np.pi, n_samples)
+            R = _mp.get("R", 1.5)
+            r_t = _mp.get("r", 0.5)
+            x = (R + r_t * np.cos(v)) * np.cos(u)
+            y = (R + r_t * np.cos(v)) * np.sin(u)
+            z = r_t * np.sin(v)
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "mobius":
+            u = rng.uniform(0, 2 * np.pi, n_samples)
+            k = _mp.get("n_twists", 1)
+            sw = _mp.get("strip_width", 0.5)
+            w = rng.uniform(-sw, sw, n_samples)
+            x = (1 + w * np.cos(k * u / 2)) * np.cos(u)
+            y = (1 + w * np.cos(k * u / 2)) * np.sin(u)
+            z = w * np.sin(k * u / 2)
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "trefoil":
+            t = rng.uniform(0, 2 * np.pi, n_samples)
+            x = np.sin(t) + 2 * np.sin(2 * t)
+            y = np.cos(t) - 2 * np.cos(2 * t)
+            z = -np.sin(3 * t)
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "helix":
+            turns = _mp.get("turns", 4)
+            R = _mp.get("radius", 1.0)
+            p = _mp.get("pitch", 0.5)
+            t = rng.uniform(0, 2 * np.pi * turns, n_samples)
+            x = R * np.cos(t)
+            y = R * np.sin(t)
+            z = p * t / (2 * np.pi)
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "double_helix":
+            turns = _mp.get("turns", 4)
+            R = _mp.get("radius", 1.0)
+            p = _mp.get("pitch", 0.5)
+            half = n_samples // 2
+            t1 = rng.uniform(0, 2 * np.pi * turns, half)
+            t2 = rng.uniform(0, 2 * np.pi * turns, n_samples - half)
+            x = np.concatenate([R * np.cos(t1), R * np.cos(t2 + np.pi)])
+            y = np.concatenate([R * np.sin(t1), R * np.sin(t2 + np.pi)])
+            z = np.concatenate([p * t1 / (2 * np.pi), p * t2 / (2 * np.pi)])
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "catenoid":
+            ch = _mp.get("height", 1.5)
+            u = rng.uniform(-ch, ch, n_samples)
+            theta = rng.uniform(0, 2 * np.pi, n_samples)
+            x = np.cosh(u) * np.cos(theta)
+            y = np.cosh(u) * np.sin(theta)
+            z = u
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "saddle":
+            ext = _mp.get("extent", 2.0)
+            k = _mp.get("curvature", 0.5)
+            u = rng.uniform(-ext, ext, n_samples)
+            v = rng.uniform(-ext, ext, n_samples)
+            x = u
+            y = v
+            z = k * (u**2 - v**2)
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "horn":
+            length = _mp.get("length", 8.0)
+            t = rng.uniform(1, length, n_samples)
+            theta = rng.uniform(0, 2 * np.pi, n_samples)
+            x = t
+            y = (1 / t) * np.cos(theta)
+            z = (1 / t) * np.sin(theta)
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "clifford":
+            r1 = _mp.get("r1", 1.0)
+            r2 = _mp.get("r2", 1.0)
+            a = _mp.get("angle", np.pi / 4)
+            u = rng.uniform(0, 2 * np.pi, n_samples)
+            v = rng.uniform(0, 2 * np.pi, n_samples)
+            x4 = r1 * np.cos(u)
+            y4 = r1 * np.sin(u)
+            z4 = r2 * np.cos(v)
+            w4 = r2 * np.sin(v)
+            x_rot = x4 * np.cos(a) - w4 * np.sin(a)
+            w_rot = x4 * np.sin(a) + w4 * np.cos(a)
+            denom = 2.5 - w_rot
+            x = x_rot / denom
+            y = y4 / denom
+            z = z4 / denom
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
+        elif name == "klein":
+            u = rng.uniform(0, 2 * np.pi, n_samples)
+            v = rng.uniform(0, 2 * np.pi, n_samples)
+            neck = _mp.get("neck", 4.0)
+            body = _mp.get("body", 6.0)
+            h = _mp.get("height", 16.0)
+            a = _mp.get("angle", 0.0)
+            r_k = neck * (1 - np.cos(u) / 2)
+            mask = u < np.pi
+            x4 = np.where(
+                mask,
+                body * np.cos(u) * (1 + np.sin(u)) + r_k * np.cos(u) * np.cos(v),
+                body * np.cos(u) * (1 + np.sin(u)) + r_k * np.cos(v + np.pi),
+            )
+            y4 = np.where(
+                mask,
+                h * np.sin(u) + r_k * np.sin(u) * np.cos(v),
+                h * np.sin(u),
+            )
+            z4 = r_k * np.sin(v)
+            w4 = r_k * np.cos(v) * np.sin(u)
+            x = x4 * np.cos(a) - w4 * np.sin(a)
+            y = y4
+            z = z4 * np.cos(a) + w4 * np.sin(a)
+            data = np.column_stack([x, y, z])
+            data += rng.standard_normal(data.shape) * noise
         else:
             data = rng.standard_normal((n_samples, 2))
         data = (data - data.mean(axis=0)) / data.std(axis=0)
@@ -942,11 +1367,13 @@ def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
         return np.asarray(z)
 
     master_key = jax.random.PRNGKey(67)
-    D_values = [
+    D_values_all = [
         2,
         3,
-        # 8,
+        8,
         16,
+        32,
+        128,
         512,
     ]
     n_steps = 10000
@@ -964,9 +1391,9 @@ def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
         "v_pred": "tab:green",
     }
     return (
-        D_values,
+        D_values_all,
         colors,
-        generate_2d_data,
+        generate_data,
         generate_samples,
         make_projection,
         master_key,
@@ -975,6 +1402,678 @@ def _(eqx, jax, jnp, make_circles, make_moons, make_swiss_roll, np, optax):
         pred_labels,
         train_model,
     )
+
+
+@app.cell(hide_code=True)
+def traj_controls(D_values, mo, n_sample_steps):
+    traj_D = mo.ui.dropdown(
+        options={str(value): value for value in D_values},
+        value=str(D_values[0]),
+        label="Ambient dimension",
+    )
+    traj_batch = mo.ui.slider(
+        start=10,
+        stop=200,
+        step=10,
+        value=50,
+        label="Trajectory points",
+        show_value=True,
+    )
+    traj_noise_t = mo.ui.slider(
+        start=0.0,
+        stop=0.95,
+        step=0.05,
+        value=0.3,
+        label="Denoising start $t_0$",
+        show_value=True,
+    )
+    traj_view_t = mo.ui.slider(
+        start=0.0,
+        stop=1.0,
+        step=round(1.0 / n_sample_steps, 4),
+        value=1.0,
+        label="View at $t$",
+        show_value=True,
+    )
+    traj_focus = mo.ui.switch(label="Focus on single point", value=False)
+    traj_show_vf = mo.ui.switch(label="Show velocity field", value=False)
+    return (
+        traj_D,
+        traj_batch,
+        traj_focus,
+        traj_noise_t,
+        traj_show_vf,
+        traj_view_t,
+    )
+
+
+@app.cell(hide_code=True)
+def traj_compute(
+    data_preview,
+    jax,
+    jnp,
+    n_sample_steps,
+    noise_scale,
+    np,
+    pred_labels,
+    projections,
+    results,
+    solver,
+    t_eps,
+    traj_D,
+    traj_batch,
+    traj_noise_t,
+):
+    _D = traj_D.value
+    _P_np = projections[_D]
+    _P = jnp.array(_P_np)
+    _t_start = traj_noise_t.value
+    _n = int(traj_batch.value)
+    _ns = noise_scale.value
+    _te = t_eps.value
+    _n_steps = n_sample_steps
+    _use_heun = solver.value == "heun"
+
+    _rng = np.random.default_rng(42)
+    _idx = _rng.choice(
+        len(data_preview), size=min(_n, len(data_preview)), replace=False
+    )
+    traj_clean_pts = data_preview[_idx]
+
+    _x_D = jnp.array(traj_clean_pts) @ _P.T
+    _eps = jax.random.normal(jax.random.PRNGKey(42), _x_D.shape) * _ns
+    _z_start = _t_start * _x_D + (1 - _t_start) * _eps
+
+    def _get_velocity(_pred, _z_t, _t_val, _pred_type, _t_eps):
+        if _pred_type == "x_pred":
+            return (_pred - _z_t) / jnp.maximum(1 - _t_val, _t_eps)
+        elif _pred_type == "eps_pred":
+            return (_z_t - _pred) / jnp.maximum(_t_val, _t_eps)
+        return _pred
+
+    traj_paths = {}
+    for _pred_type in pred_labels:
+        _model = results[(_D, _pred_type)]["model"]
+        _z = _z_start
+        _traj = [np.asarray(_z @ _P)]
+
+        for _i in range(_n_steps):
+            _t_val = _t_start + (1.0 - _t_start) * _i / _n_steps
+            _t_next = _t_start + (1.0 - _t_start) * (_i + 1) / _n_steps
+            _t_arr = jnp.full((_z.shape[0], 1), _t_val)
+            _pred = jax.vmap(_model)(_z, _t_arr)
+            _v = _get_velocity(_pred, _z, _t_val, _pred_type, _te)
+
+            if _use_heun and _i < _n_steps - 1:
+                _z_euler = _z + (_t_next - _t_val) * _v
+                _t_next_arr = jnp.full((_z.shape[0], 1), _t_next)
+                _pred_next = jax.vmap(_model)(_z_euler, _t_next_arr)
+                _v_next = _get_velocity(_pred_next, _z_euler, _t_next, _pred_type, _te)
+                _z = _z + (_t_next - _t_val) * 0.5 * (_v + _v_next)
+            else:
+                _z = _z + (_t_next - _t_val) * _v
+
+            _traj.append(np.asarray(_z @ _P))
+
+        traj_paths[_pred_type] = _traj
+
+    return traj_clean_pts, traj_paths
+
+
+@app.cell(hide_code=True)
+def traj_focus_idx_cell(mo, traj_clean_pts):
+    traj_focus_idx = mo.ui.slider(
+        start=0,
+        stop=len(traj_clean_pts) - 1,
+        step=1,
+        value=0,
+        label="Point index",
+        show_value=True,
+    )
+    return (traj_focus_idx,)
+
+
+@app.cell(hide_code=True)
+def traj_viz(
+    colors,
+    data_dim,
+    data_preview,
+    dataset_dropdown,
+    dataset_noise,
+    jax,
+    jnp,
+    manifold_params,
+    mo,
+    np,
+    plt,
+    pred_labels,
+    projections,
+    results,
+    t_eps,
+    traj_D,
+    traj_batch,
+    traj_clean_pts,
+    traj_focus,
+    traj_focus_idx,
+    traj_noise_t,
+    traj_paths,
+    traj_show_vf,
+    traj_view_t,
+):
+    _n_pts = len(traj_clean_pts)
+    _n_steps = len(list(traj_paths.values())[0]) - 1
+    _step = min(int(traj_view_t.value * _n_steps), _n_steps)
+    _D = traj_D.value
+    _t_start = traj_noise_t.value
+    _t_actual = _t_start + traj_view_t.value * (1.0 - _t_start)
+    _focus_on = traj_focus.value
+    _focus_i = min(int(traj_focus_idx.value), _n_pts - 1)
+    _is_3d = data_dim == 3
+    _ds = dataset_dropdown.value
+    _mp = manifold_params.value
+    _show_vf = traj_show_vf.value and not _is_3d
+
+    def _noisy_stats(_ds, _mp, _noise, _n=10000):
+        """Get raw mean/std from a noisy sample for proper mesh alignment."""
+        _rng = np.random.default_rng(0)
+        _3d_surfaces = {
+            "torus",
+            "mobius",
+            "catenoid",
+            "saddle",
+            "horn",
+            "clifford",
+            "klein",
+        }
+        _3d_curves = {"trefoil", "helix", "double_helix"}
+        if _ds == "torus":
+            _u, _v = (
+                _rng.uniform(0, 2 * np.pi, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _R, _r = _mp.get("R", 1.5), _mp.get("r", 0.5)
+            _raw = np.column_stack(
+                [
+                    (_R + _r * np.cos(_v)) * np.cos(_u),
+                    (_R + _r * np.cos(_v)) * np.sin(_u),
+                    _r * np.sin(_v),
+                ]
+            )
+        elif _ds == "mobius":
+            _u = _rng.uniform(0, 2 * np.pi, _n)
+            _w = _rng.uniform(
+                -_mp.get("strip_width", 0.5), _mp.get("strip_width", 0.5), _n
+            )
+            _k = _mp.get("n_twists", 1)
+            _raw = np.column_stack(
+                [
+                    (1 + _w * np.cos(_k * _u / 2)) * np.cos(_u),
+                    (1 + _w * np.cos(_k * _u / 2)) * np.sin(_u),
+                    _w * np.sin(_k * _u / 2),
+                ]
+            )
+        elif _ds == "catenoid":
+            _ch = _mp.get("height", 1.5)
+            _u, _th = (
+                _rng.uniform(-_ch, _ch, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _raw = np.column_stack(
+                [np.cosh(_u) * np.cos(_th), np.cosh(_u) * np.sin(_th), _u]
+            )
+        elif _ds == "saddle":
+            _ext = _mp.get("extent", 2.0)
+            _k = _mp.get("curvature", 0.5)
+            _u, _v = (
+                _rng.uniform(-_ext, _ext, _n),
+                _rng.uniform(-_ext, _ext, _n),
+            )
+            _raw = np.column_stack([_u, _v, _k * (_u**2 - _v**2)])
+        elif _ds == "horn":
+            _length = _mp.get("length", 8.0)
+            _t, _th = (
+                _rng.uniform(1, _length, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _raw = np.column_stack([_t, (1 / _t) * np.cos(_th), (1 / _t) * np.sin(_th)])
+        elif _ds == "clifford":
+            _r1, _r2, _a = (
+                _mp.get("r1", 1.0),
+                _mp.get("r2", 1.0),
+                _mp.get("angle", np.pi / 4),
+            )
+            _u, _v = (
+                _rng.uniform(0, 2 * np.pi, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _x4, _y4, _z4, _w4 = (
+                _r1 * np.cos(_u),
+                _r1 * np.sin(_u),
+                _r2 * np.cos(_v),
+                _r2 * np.sin(_v),
+            )
+            _xr = _x4 * np.cos(_a) - _w4 * np.sin(_a)
+            _wr = _x4 * np.sin(_a) + _w4 * np.cos(_a)
+            _d = 2.5 - _wr
+            _raw = np.column_stack([_xr / _d, _y4 / _d, _z4 / _d])
+        elif _ds == "klein":
+            _u, _v = (
+                _rng.uniform(0, 2 * np.pi, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _neck, _body, _h, _a = (
+                _mp.get("neck", 4.0),
+                _mp.get("body", 6.0),
+                _mp.get("height", 16.0),
+                _mp.get("angle", 0.0),
+            )
+            _rk = _neck * (1 - np.cos(_u) / 2)
+            _mask = _u < np.pi
+            _x4 = np.where(
+                _mask,
+                _body * np.cos(_u) * (1 + np.sin(_u)) + _rk * np.cos(_u) * np.cos(_v),
+                _body * np.cos(_u) * (1 + np.sin(_u)) + _rk * np.cos(_v + np.pi),
+            )
+            _y4 = np.where(
+                _mask,
+                _h * np.sin(_u) + _rk * np.sin(_u) * np.cos(_v),
+                _h * np.sin(_u),
+            )
+            _z4, _w4 = _rk * np.sin(_v), _rk * np.cos(_v) * np.sin(_u)
+            _raw = np.column_stack(
+                [
+                    _x4 * np.cos(_a) - _w4 * np.sin(_a),
+                    _y4,
+                    _z4 * np.cos(_a) + _w4 * np.sin(_a),
+                ]
+            )
+        elif _ds == "trefoil":
+            _t = _rng.uniform(0, 2 * np.pi, _n)
+            _raw = np.column_stack(
+                [
+                    np.sin(_t) + 2 * np.sin(2 * _t),
+                    np.cos(_t) - 2 * np.cos(2 * _t),
+                    -np.sin(3 * _t),
+                ]
+            )
+        elif _ds == "helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _t = _rng.uniform(0, 2 * np.pi * _turns, _n)
+            _raw = np.column_stack(
+                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
+            )
+        elif _ds == "double_helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _half = _n // 2
+            _t1, _t2 = (
+                _rng.uniform(0, 2 * np.pi * _turns, _half),
+                _rng.uniform(0, 2 * np.pi * _turns, _n - _half),
+            )
+            _raw = np.column_stack(
+                [
+                    np.concatenate([_R * np.cos(_t1), _R * np.cos(_t2 + np.pi)]),
+                    np.concatenate([_R * np.sin(_t1), _R * np.sin(_t2 + np.pi)]),
+                    np.concatenate([_p * _t1 / (2 * np.pi), _p * _t2 / (2 * np.pi)]),
+                ]
+            )
+        else:
+            return None, None
+        _raw += _rng.standard_normal(_raw.shape) * _noise
+        return _raw.mean(0), np.maximum(_raw.std(0), 1e-8)
+
+    _mesh_stats = _noisy_stats(_ds, _mp, dataset_noise.value)
+
+    def _standardize_mesh(_X, _Y, _Z):
+        if _mesh_stats[0] is None:
+            return _X, _Y, _Z
+        _mean, _std = _mesh_stats
+        return (
+            (_X - _mean[0]) / _std[0],
+            (_Y - _mean[1]) / _std[1],
+            (_Z - _mean[2]) / _std[2],
+        )
+
+    def _standardize_curve(_pts):
+        if _mesh_stats[0] is None:
+            return _pts
+        _mean, _std = _mesh_stats
+        return (_pts - _mean) / _std
+
+    def _make_surface(_ds, _mp, _res=40):
+        if _ds == "torus":
+            _uu, _vv = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(0, 2 * np.pi, _res),
+            )
+            _R, _r = _mp.get("R", 1.5), _mp.get("r", 0.5)
+            _X = (_R + _r * np.cos(_vv)) * np.cos(_uu)
+            _Y = (_R + _r * np.cos(_vv)) * np.sin(_uu)
+            _Z = _r * np.sin(_vv)
+        elif _ds == "mobius":
+            _sw = _mp.get("strip_width", 0.5)
+            _uu, _ww = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(-_sw, _sw, max(_res // 2, 10)),
+            )
+            _k = _mp.get("n_twists", 1)
+            _X = (1 + _ww * np.cos(_k * _uu / 2)) * np.cos(_uu)
+            _Y = (1 + _ww * np.cos(_k * _uu / 2)) * np.sin(_uu)
+            _Z = _ww * np.sin(_k * _uu / 2)
+        elif _ds == "catenoid":
+            _ch = _mp.get("height", 1.5)
+            _uu, _th = np.meshgrid(
+                np.linspace(-_ch, _ch, _res), np.linspace(0, 2 * np.pi, _res)
+            )
+            _X = np.cosh(_uu) * np.cos(_th)
+            _Y = np.cosh(_uu) * np.sin(_th)
+            _Z = _uu
+        elif _ds == "saddle":
+            _ext = _mp.get("extent", 2.0)
+            _k = _mp.get("curvature", 0.5)
+            _uu, _vv = np.meshgrid(
+                np.linspace(-_ext, _ext, _res), np.linspace(-_ext, _ext, _res)
+            )
+            _X, _Y = _uu, _vv
+            _Z = _k * (_uu**2 - _vv**2)
+        elif _ds == "horn":
+            _length = _mp.get("length", 8.0)
+            _tt, _th = np.meshgrid(
+                np.linspace(1, _length, _res), np.linspace(0, 2 * np.pi, _res)
+            )
+            _X = _tt
+            _Y = (1 / _tt) * np.cos(_th)
+            _Z = (1 / _tt) * np.sin(_th)
+        elif _ds == "clifford":
+            _r1, _r2 = _mp.get("r1", 1.0), _mp.get("r2", 1.0)
+            _a = _mp.get("angle", np.pi / 4)
+            _uu, _vv = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(0, 2 * np.pi, _res),
+            )
+            _x4, _y4 = _r1 * np.cos(_uu), _r1 * np.sin(_uu)
+            _z4, _w4 = _r2 * np.cos(_vv), _r2 * np.sin(_vv)
+            _xr = _x4 * np.cos(_a) - _w4 * np.sin(_a)
+            _wr = _x4 * np.sin(_a) + _w4 * np.cos(_a)
+            _d = 2.5 - _wr
+            _X, _Y, _Z = _xr / _d, _y4 / _d, _z4 / _d
+        elif _ds == "klein":
+            _uu, _vv = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(0, 2 * np.pi, _res),
+            )
+            _neck, _body = _mp.get("neck", 4.0), _mp.get("body", 6.0)
+            _h, _a = _mp.get("height", 16.0), _mp.get("angle", 0.0)
+            _rk = _neck * (1 - np.cos(_uu) / 2)
+            _mask = _uu < np.pi
+            _x4 = np.where(
+                _mask,
+                _body * np.cos(_uu) * (1 + np.sin(_uu))
+                + _rk * np.cos(_uu) * np.cos(_vv),
+                _body * np.cos(_uu) * (1 + np.sin(_uu)) + _rk * np.cos(_vv + np.pi),
+            )
+            _y4 = np.where(
+                _mask,
+                _h * np.sin(_uu) + _rk * np.sin(_uu) * np.cos(_vv),
+                _h * np.sin(_uu),
+            )
+            _z4 = _rk * np.sin(_vv)
+            _w4 = _rk * np.cos(_vv) * np.sin(_uu)
+            _X = _x4 * np.cos(_a) - _w4 * np.sin(_a)
+            _Y = _y4
+            _Z = _z4 * np.cos(_a) + _w4 * np.sin(_a)
+        else:
+            return None
+        return _standardize_mesh(_X, _Y, _Z)
+
+    def _make_curve(_ds, _mp):
+        if _ds == "trefoil":
+            _t = np.linspace(0, 2 * np.pi, 500)
+            _pts = np.column_stack(
+                [
+                    np.sin(_t) + 2 * np.sin(2 * _t),
+                    np.cos(_t) - 2 * np.cos(2 * _t),
+                    -np.sin(3 * _t),
+                ]
+            )
+        elif _ds == "helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _t = np.linspace(0, 2 * np.pi * _turns, 500)
+            _pts = np.column_stack(
+                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
+            )
+        elif _ds == "double_helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _t = np.linspace(0, 2 * np.pi * _turns, 300)
+            _h1 = np.column_stack(
+                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
+            )
+            _h2 = np.column_stack(
+                [
+                    _R * np.cos(_t + np.pi),
+                    _R * np.sin(_t + np.pi),
+                    _p * _t / (2 * np.pi),
+                ]
+            )
+            _pts = np.vstack([_h1, _h2])
+        else:
+            return None
+        return _standardize_curve(_pts)
+
+    def _scatter(_ax, _data, **kwargs):
+        if _data.ndim == 1:
+            _data = _data.reshape(1, -1)
+        if _is_3d:
+            _ax.scatter(_data[:, 0], _data[:, 1], _data[:, 2], **kwargs)
+        else:
+            _ax.scatter(_data[:, 0], _data[:, 1], **kwargs)
+
+    def _plot_line(_ax, _data, **kwargs):
+        if _is_3d:
+            _ax.plot(_data[:, 0], _data[:, 1], _data[:, 2], **kwargs)
+        else:
+            _ax.plot(_data[:, 0], _data[:, 1], **kwargs)
+
+    _fig = plt.figure(figsize=(10, 8))
+    _ax = _fig.add_subplot(111, projection="3d") if _is_3d else _fig.add_subplot(111)
+    _lim = np.abs(data_preview).max() * 1.1
+
+    if _is_3d:
+        _mesh = _make_surface(_ds, _mp)
+        if _mesh is not None:
+            _ax.plot_surface(
+                _mesh[0],
+                _mesh[1],
+                _mesh[2],
+                alpha=0.12,
+                color="lavender",
+                edgecolor="plum",
+                linewidth=0.3,
+                rstride=2,
+                cstride=2,
+                zorder=0,
+            )
+        else:
+            _curve = _make_curve(_ds, _mp)
+            if _curve is not None:
+                _plot_line(
+                    _ax,
+                    _curve,
+                    color="lavender",
+                    linewidth=3,
+                    alpha=0.6,
+                    zorder=0,
+                )
+
+    _scatter(_ax, data_preview, s=1, alpha=0.05, c=colors["ground_truth"], zorder=1)
+
+    # Velocity field (2D only)
+    if _show_vf:
+        _vf_res = 15
+        _P_jnp = jnp.array(projections[_D])
+        _te = t_eps.value
+        _xs = np.linspace(-_lim, _lim, _vf_res)
+        _ys = np.linspace(-_lim, _lim, _vf_res)
+        _xx, _yy = np.meshgrid(_xs, _ys)
+        _grid_2d = np.stack([_xx.ravel(), _yy.ravel()], axis=-1).astype(np.float32)
+        _z_grid_D = jnp.array(_grid_2d) @ _P_jnp.T
+        _t_arr_vf = jnp.full((_grid_2d.shape[0], 1), _t_actual)
+
+        _vf_max = 1e-8
+        _vf_data = {}
+        for _pred_type in pred_labels:
+            _model = results[(_D, _pred_type)]["model"]
+            _pred = jax.vmap(_model)(_z_grid_D, _t_arr_vf)
+            if _pred_type == "x_pred":
+                _v_D = (_pred - _z_grid_D) / jnp.maximum(1 - _t_actual, _te)
+            elif _pred_type == "eps_pred":
+                _v_D = (_z_grid_D - _pred) / jnp.maximum(_t_actual, _te)
+            else:
+                _v_D = _pred
+            _v_2d = np.asarray(_v_D @ _P_jnp)
+            _vf_data[_pred_type] = _v_2d
+            _vf_max = max(_vf_max, np.sqrt((_v_2d**2).sum(axis=1)).max())
+
+        for _pred_type in pred_labels:
+            _v_2d = _vf_data[_pred_type]
+            _u_arr = _v_2d[:, 0].reshape(_vf_res, _vf_res)
+            _v_arr = _v_2d[:, 1].reshape(_vf_res, _vf_res)
+            _mag = np.sqrt(_u_arr**2 + _v_arr**2)
+            _dir_u = _u_arr / np.maximum(_mag, 1e-8)
+            _dir_v = _v_arr / np.maximum(_mag, 1e-8)
+            _mag_norm = _mag / _vf_max
+            _ax.quiver(
+                _xx,
+                _yy,
+                _dir_u,
+                _dir_v,
+                color=colors[_pred_type],
+                alpha=np.clip(_mag_norm * 1.0, 0.1, 1.0),
+                scale=_vf_res * 1.2,
+                width=0.004,
+                zorder=2,
+            )
+
+    from matplotlib.lines import Line2D
+
+    _legend_handles = []
+
+    for _pred_type, _pred_label in pred_labels.items():
+        _traj = traj_paths[_pred_type]
+        _color = colors[_pred_type]
+        _legend_handles.append(
+            Line2D([0], [0], color=_color, linewidth=2, label=_pred_label)
+        )
+
+        if _focus_on:
+            _path_past = np.array([_traj[_s][_focus_i] for _s in range(_step + 1)])
+            _plot_line(
+                _ax,
+                _path_past,
+                alpha=0.9,
+                color=_color,
+                linewidth=2.5,
+                zorder=5,
+            )
+            if _step < _n_steps:
+                _path_future = np.array(
+                    [_traj[_s][_focus_i] for _s in range(_step, _n_steps + 1)]
+                )
+                _plot_line(
+                    _ax,
+                    _path_future,
+                    alpha=0.5,
+                    color=_color,
+                    linewidth=1.5,
+                    zorder=4,
+                )
+            _scatter(
+                _ax,
+                _traj[_step][_focus_i],
+                s=60,
+                c=_color,
+                edgecolors="none",
+                zorder=7,
+            )
+        else:
+            for _i in range(_n_pts):
+                _path = np.array([_traj[_s][_i] for _s in range(_step + 1)])
+                _plot_line(
+                    _ax,
+                    _path,
+                    alpha=0.5,
+                    color=_color,
+                    linewidth=0.5,
+                    zorder=3,
+                )
+            _scatter(
+                _ax,
+                _traj[_step],
+                s=10,
+                c=_color,
+                zorder=6,
+                edgecolors="white",
+                linewidths=0.3,
+            )
+
+    if _is_3d:
+        _ax.set_xlim(-_lim, _lim)
+        _ax.set_ylim(-_lim, _lim)
+        _ax.set_zlim(-_lim, _lim)
+        _ax.set_xticks([])
+        _ax.set_yticks([])
+        _ax.set_zticks([])
+    else:
+        _ax.set_xlim(-_lim, _lim)
+        _ax.set_ylim(-_lim, _lim)
+        _ax.set_aspect("equal")
+        _ax.set_xticks([])
+        _ax.set_yticks([])
+
+    _ax.legend(handles=_legend_handles, loc="upper right")
+    _fig.tight_layout()
+
+    _row3 = [traj_focus]
+    if traj_focus.value:
+        _row3.append(traj_focus_idx)
+    _title = f"## Denoising trajectories from $t_0={_t_start:.2f}$ to $t={_t_actual:.2f}$ in $D={_D}$"
+
+    _controls = [
+        mo.hstack([traj_D, traj_batch]),
+        mo.hstack([traj_noise_t, traj_view_t]),
+        mo.hstack(_row3),
+    ]
+    if not _is_3d:
+        _controls.append(traj_show_vf)
+
+    mo.vstack(
+        [
+            mo.md(_title),
+            mo.md(r"""
+        Each line traces a point's path through the reverse denoising ODE.
+        **$x$-prediction** trajectories stay close to the data manifold, while **$\epsilon$** and **$v$-prediction** trajectories can wander off-manifold.
+        """),
+            mo.vstack(_controls),
+            mo.mpl.interactive(_fig),
+        ],
+        align="center",
+    )
+    return
 
 
 if __name__ == "__main__":
