@@ -685,6 +685,573 @@ def _(
 
 
 @app.cell(hide_code=True)
+def traj_viz(
+    colors,
+    data_dim,
+    data_preview,
+    dataset_dropdown,
+    dataset_noise,
+    jax,
+    jnp,
+    manifold_params,
+    mo,
+    np,
+    plt,
+    pred_labels,
+    projections,
+    results,
+    t_eps,
+    traj_D,
+    traj_batch,
+    traj_clean_pts,
+    traj_focus,
+    traj_focus_idx,
+    traj_noise_t,
+    traj_paths,
+    traj_show_vf,
+    traj_view_t,
+):
+    _n_pts = len(traj_clean_pts)
+    _n_steps = len(list(traj_paths.values())[0]) - 1
+    _step = min(int(traj_view_t.value * _n_steps), _n_steps)
+    _D = traj_D.value
+    _t_start = traj_noise_t.value
+    _t_actual = _t_start + traj_view_t.value * (1.0 - _t_start)
+    _focus_on = traj_focus.value
+    _focus_i = min(int(traj_focus_idx.value), _n_pts - 1)
+    _is_3d = data_dim == 3
+    _ds = dataset_dropdown.value
+    _mp = manifold_params.value
+    _show_vf = traj_show_vf.value and not _is_3d
+
+    def _noisy_stats(_ds, _mp, _noise, _n=10000):
+        """Get raw mean/std from a noisy sample for proper mesh alignment."""
+        _rng = np.random.default_rng(0)
+        _3d_surfaces = {
+            "torus",
+            "mobius",
+            "catenoid",
+            "saddle",
+            "horn",
+            "clifford",
+            "klein",
+        }
+        _3d_curves = {"trefoil", "helix", "double_helix"}
+        if _ds == "torus":
+            _u, _v = (
+                _rng.uniform(0, 2 * np.pi, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _R, _r = _mp.get("R", 1.5), _mp.get("r", 0.5)
+            _raw = np.column_stack(
+                [
+                    (_R + _r * np.cos(_v)) * np.cos(_u),
+                    (_R + _r * np.cos(_v)) * np.sin(_u),
+                    _r * np.sin(_v),
+                ]
+            )
+        elif _ds == "mobius":
+            _u = _rng.uniform(0, 2 * np.pi, _n)
+            _w = _rng.uniform(
+                -_mp.get("strip_width", 0.5), _mp.get("strip_width", 0.5), _n
+            )
+            _k = _mp.get("n_twists", 1)
+            _raw = np.column_stack(
+                [
+                    (1 + _w * np.cos(_k * _u / 2)) * np.cos(_u),
+                    (1 + _w * np.cos(_k * _u / 2)) * np.sin(_u),
+                    _w * np.sin(_k * _u / 2),
+                ]
+            )
+        elif _ds == "catenoid":
+            _ch = _mp.get("height", 1.5)
+            _u, _th = (
+                _rng.uniform(-_ch, _ch, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _raw = np.column_stack(
+                [np.cosh(_u) * np.cos(_th), np.cosh(_u) * np.sin(_th), _u]
+            )
+        elif _ds == "saddle":
+            _ext = _mp.get("extent", 2.0)
+            _k = _mp.get("curvature", 0.5)
+            _u, _v = (
+                _rng.uniform(-_ext, _ext, _n),
+                _rng.uniform(-_ext, _ext, _n),
+            )
+            _raw = np.column_stack([_u, _v, _k * (_u**2 - _v**2)])
+        elif _ds == "horn":
+            _length = _mp.get("length", 8.0)
+            _t, _th = (
+                _rng.uniform(1, _length, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _raw = np.column_stack([_t, (1 / _t) * np.cos(_th), (1 / _t) * np.sin(_th)])
+        elif _ds == "clifford":
+            _r1, _r2, _a = (
+                _mp.get("r1", 1.0),
+                _mp.get("r2", 1.0),
+                _mp.get("angle", np.pi / 4),
+            )
+            _u, _v = (
+                _rng.uniform(0, 2 * np.pi, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _x4, _y4, _z4, _w4 = (
+                _r1 * np.cos(_u),
+                _r1 * np.sin(_u),
+                _r2 * np.cos(_v),
+                _r2 * np.sin(_v),
+            )
+            _xr = _x4 * np.cos(_a) - _w4 * np.sin(_a)
+            _wr = _x4 * np.sin(_a) + _w4 * np.cos(_a)
+            _d = 2.5 - _wr
+            _raw = np.column_stack([_xr / _d, _y4 / _d, _z4 / _d])
+        elif _ds == "klein":
+            _u, _v = (
+                _rng.uniform(0, 2 * np.pi, _n),
+                _rng.uniform(0, 2 * np.pi, _n),
+            )
+            _neck, _body, _h, _a = (
+                _mp.get("neck", 4.0),
+                _mp.get("body", 6.0),
+                _mp.get("height", 16.0),
+                _mp.get("angle", 0.0),
+            )
+            _rk = _neck * (1 - np.cos(_u) / 2)
+            _mask = _u < np.pi
+            _x4 = np.where(
+                _mask,
+                _body * np.cos(_u) * (1 + np.sin(_u)) + _rk * np.cos(_u) * np.cos(_v),
+                _body * np.cos(_u) * (1 + np.sin(_u)) + _rk * np.cos(_v + np.pi),
+            )
+            _y4 = np.where(
+                _mask,
+                _h * np.sin(_u) + _rk * np.sin(_u) * np.cos(_v),
+                _h * np.sin(_u),
+            )
+            _z4, _w4 = _rk * np.sin(_v), _rk * np.cos(_v) * np.sin(_u)
+            _raw = np.column_stack(
+                [
+                    _x4 * np.cos(_a) - _w4 * np.sin(_a),
+                    _y4,
+                    _z4 * np.cos(_a) + _w4 * np.sin(_a),
+                ]
+            )
+        elif _ds == "trefoil":
+            _t = _rng.uniform(0, 2 * np.pi, _n)
+            _raw = np.column_stack(
+                [
+                    np.sin(_t) + 2 * np.sin(2 * _t),
+                    np.cos(_t) - 2 * np.cos(2 * _t),
+                    -np.sin(3 * _t),
+                ]
+            )
+        elif _ds == "helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _t = _rng.uniform(0, 2 * np.pi * _turns, _n)
+            _raw = np.column_stack(
+                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
+            )
+        elif _ds == "double_helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _half = _n // 2
+            _t1, _t2 = (
+                _rng.uniform(0, 2 * np.pi * _turns, _half),
+                _rng.uniform(0, 2 * np.pi * _turns, _n - _half),
+            )
+            _raw = np.column_stack(
+                [
+                    np.concatenate([_R * np.cos(_t1), _R * np.cos(_t2 + np.pi)]),
+                    np.concatenate([_R * np.sin(_t1), _R * np.sin(_t2 + np.pi)]),
+                    np.concatenate([_p * _t1 / (2 * np.pi), _p * _t2 / (2 * np.pi)]),
+                ]
+            )
+        else:
+            return None, None
+        _raw += _rng.standard_normal(_raw.shape) * _noise
+        return _raw.mean(0), np.maximum(_raw.std(0), 1e-8)
+
+    _mesh_stats = _noisy_stats(_ds, _mp, dataset_noise.value)
+
+    def _standardize_mesh(_X, _Y, _Z):
+        if _mesh_stats[0] is None:
+            return _X, _Y, _Z
+        _mean, _std = _mesh_stats
+        return (
+            (_X - _mean[0]) / _std[0],
+            (_Y - _mean[1]) / _std[1],
+            (_Z - _mean[2]) / _std[2],
+        )
+
+    def _standardize_curve(_pts):
+        if _mesh_stats[0] is None:
+            return _pts
+        _mean, _std = _mesh_stats
+        return (_pts - _mean) / _std
+
+    def _make_surface(_ds, _mp, _res=40):
+        if _ds == "torus":
+            _uu, _vv = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(0, 2 * np.pi, _res),
+            )
+            _R, _r = _mp.get("R", 1.5), _mp.get("r", 0.5)
+            _X = (_R + _r * np.cos(_vv)) * np.cos(_uu)
+            _Y = (_R + _r * np.cos(_vv)) * np.sin(_uu)
+            _Z = _r * np.sin(_vv)
+        elif _ds == "mobius":
+            _sw = _mp.get("strip_width", 0.5)
+            _uu, _ww = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(-_sw, _sw, max(_res // 2, 10)),
+            )
+            _k = _mp.get("n_twists", 1)
+            _X = (1 + _ww * np.cos(_k * _uu / 2)) * np.cos(_uu)
+            _Y = (1 + _ww * np.cos(_k * _uu / 2)) * np.sin(_uu)
+            _Z = _ww * np.sin(_k * _uu / 2)
+        elif _ds == "catenoid":
+            _ch = _mp.get("height", 1.5)
+            _uu, _th = np.meshgrid(
+                np.linspace(-_ch, _ch, _res), np.linspace(0, 2 * np.pi, _res)
+            )
+            _X = np.cosh(_uu) * np.cos(_th)
+            _Y = np.cosh(_uu) * np.sin(_th)
+            _Z = _uu
+        elif _ds == "saddle":
+            _ext = _mp.get("extent", 2.0)
+            _k = _mp.get("curvature", 0.5)
+            _uu, _vv = np.meshgrid(
+                np.linspace(-_ext, _ext, _res), np.linspace(-_ext, _ext, _res)
+            )
+            _X, _Y = _uu, _vv
+            _Z = _k * (_uu**2 - _vv**2)
+        elif _ds == "horn":
+            _length = _mp.get("length", 8.0)
+            _tt, _th = np.meshgrid(
+                np.linspace(1, _length, _res), np.linspace(0, 2 * np.pi, _res)
+            )
+            _X = _tt
+            _Y = (1 / _tt) * np.cos(_th)
+            _Z = (1 / _tt) * np.sin(_th)
+        elif _ds == "clifford":
+            _r1, _r2 = _mp.get("r1", 1.0), _mp.get("r2", 1.0)
+            _a = _mp.get("angle", np.pi / 4)
+            _uu, _vv = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(0, 2 * np.pi, _res),
+            )
+            _x4, _y4 = _r1 * np.cos(_uu), _r1 * np.sin(_uu)
+            _z4, _w4 = _r2 * np.cos(_vv), _r2 * np.sin(_vv)
+            _xr = _x4 * np.cos(_a) - _w4 * np.sin(_a)
+            _wr = _x4 * np.sin(_a) + _w4 * np.cos(_a)
+            _d = 2.5 - _wr
+            _X, _Y, _Z = _xr / _d, _y4 / _d, _z4 / _d
+        elif _ds == "klein":
+            _uu, _vv = np.meshgrid(
+                np.linspace(0, 2 * np.pi, _res),
+                np.linspace(0, 2 * np.pi, _res),
+            )
+            _neck, _body = _mp.get("neck", 4.0), _mp.get("body", 6.0)
+            _h, _a = _mp.get("height", 16.0), _mp.get("angle", 0.0)
+            _rk = _neck * (1 - np.cos(_uu) / 2)
+            _mask = _uu < np.pi
+            _x4 = np.where(
+                _mask,
+                _body * np.cos(_uu) * (1 + np.sin(_uu))
+                + _rk * np.cos(_uu) * np.cos(_vv),
+                _body * np.cos(_uu) * (1 + np.sin(_uu)) + _rk * np.cos(_vv + np.pi),
+            )
+            _y4 = np.where(
+                _mask,
+                _h * np.sin(_uu) + _rk * np.sin(_uu) * np.cos(_vv),
+                _h * np.sin(_uu),
+            )
+            _z4 = _rk * np.sin(_vv)
+            _w4 = _rk * np.cos(_vv) * np.sin(_uu)
+            _X = _x4 * np.cos(_a) - _w4 * np.sin(_a)
+            _Y = _y4
+            _Z = _z4 * np.cos(_a) + _w4 * np.sin(_a)
+        else:
+            return None
+        return _standardize_mesh(_X, _Y, _Z)
+
+    def _make_curve(_ds, _mp):
+        if _ds == "trefoil":
+            _t = np.linspace(0, 2 * np.pi, 500)
+            _pts = np.column_stack(
+                [
+                    np.sin(_t) + 2 * np.sin(2 * _t),
+                    np.cos(_t) - 2 * np.cos(2 * _t),
+                    -np.sin(3 * _t),
+                ]
+            )
+        elif _ds == "helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _t = np.linspace(0, 2 * np.pi * _turns, 500)
+            _pts = np.column_stack(
+                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
+            )
+        elif _ds == "double_helix":
+            _R, _p, _turns = (
+                _mp.get("radius", 1.0),
+                _mp.get("pitch", 0.5),
+                _mp.get("turns", 4),
+            )
+            _t = np.linspace(0, 2 * np.pi * _turns, 300)
+            _h1 = np.column_stack(
+                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
+            )
+            _h2 = np.column_stack(
+                [
+                    _R * np.cos(_t + np.pi),
+                    _R * np.sin(_t + np.pi),
+                    _p * _t / (2 * np.pi),
+                ]
+            )
+            _pts = np.vstack([_h1, _h2])
+        else:
+            return None
+        return _standardize_curve(_pts)
+
+    def _scatter(_ax, _data, **kwargs):
+        if _data.ndim == 1:
+            _data = _data.reshape(1, -1)
+        if _is_3d:
+            _ax.scatter(_data[:, 0], _data[:, 1], _data[:, 2], **kwargs)
+        else:
+            _ax.scatter(_data[:, 0], _data[:, 1], **kwargs)
+
+    def _plot_line(_ax, _data, **kwargs):
+        if _is_3d:
+            _ax.plot(_data[:, 0], _data[:, 1], _data[:, 2], **kwargs)
+        else:
+            _ax.plot(_data[:, 0], _data[:, 1], **kwargs)
+
+    _fig = plt.figure(figsize=(10, 8))
+    _ax = _fig.add_subplot(111, projection="3d") if _is_3d else _fig.add_subplot(111)
+    _lim = np.abs(data_preview).max() * 1.1
+
+    if _is_3d:
+        _mesh = _make_surface(_ds, _mp)
+        if _mesh is not None:
+            _ax.plot_surface(
+                _mesh[0],
+                _mesh[1],
+                _mesh[2],
+                alpha=0.12,
+                color="lavender",
+                edgecolor="plum",
+                linewidth=0.3,
+                rstride=2,
+                cstride=2,
+                zorder=0,
+            )
+        else:
+            _curve = _make_curve(_ds, _mp)
+            if _curve is not None:
+                _plot_line(
+                    _ax,
+                    _curve,
+                    color="lavender",
+                    linewidth=3,
+                    alpha=0.6,
+                    zorder=0,
+                )
+
+    _scatter(_ax, data_preview, s=1, alpha=0.05, c=colors["ground_truth"], zorder=1)
+
+    # Velocity field (2D only)
+    if _show_vf:
+        _vf_res = 15
+        _P_jnp = jnp.array(projections[_D])
+        _te = t_eps.value
+        _xs = np.linspace(-_lim, _lim, _vf_res)
+        _ys = np.linspace(-_lim, _lim, _vf_res)
+        _xx, _yy = np.meshgrid(_xs, _ys)
+        _grid_2d = np.stack([_xx.ravel(), _yy.ravel()], axis=-1).astype(np.float32)
+        _z_grid_D = jnp.array(_grid_2d) @ _P_jnp.T
+        _t_arr_vf = jnp.full((_grid_2d.shape[0], 1), _t_actual)
+
+        _vf_max = 1e-8
+        _vf_data = {}
+        for _pred_type in pred_labels:
+            _model = results[(_D, _pred_type)]["model"]
+            _pred = jax.vmap(_model)(_z_grid_D, _t_arr_vf)
+            if _pred_type == "x_pred":
+                _v_D = (_pred - _z_grid_D) / jnp.maximum(1 - _t_actual, _te)
+            elif _pred_type == "eps_pred":
+                _v_D = (_z_grid_D - _pred) / jnp.maximum(_t_actual, _te)
+            else:
+                _v_D = _pred
+            _v_2d = np.asarray(_v_D @ _P_jnp)
+            _vf_data[_pred_type] = _v_2d
+            _vf_max = max(_vf_max, np.sqrt((_v_2d**2).sum(axis=1)).max())
+
+        from matplotlib.colors import LinearSegmentedColormap, Normalize
+        from matplotlib.cm import ScalarMappable
+
+        _vf_cmaps = {
+            "x_pred": LinearSegmentedColormap.from_list(
+                "x_vf", ["darkred", "red", "yellow"]
+            ),
+            "eps_pred": LinearSegmentedColormap.from_list(
+                "eps_vf", ["darkblue", "blue", "cyan"]
+            ),
+            "v_pred": LinearSegmentedColormap.from_list(
+                "v_vf", ["darkgreen", "green", "lime"]
+            ),
+        }
+
+        for _pred_type in pred_labels:
+            _v_2d = _vf_data[_pred_type]
+            _u_arr = _v_2d[:, 0].reshape(_vf_res, _vf_res)
+            _v_arr = _v_2d[:, 1].reshape(_vf_res, _vf_res)
+            _mag = np.sqrt(_u_arr**2 + _v_arr**2)
+            _dir_u = _u_arr / np.maximum(_mag, 1e-8)
+            _dir_v = _v_arr / np.maximum(_mag, 1e-8)
+            _mag_norm = _mag / _vf_max
+            _ax.quiver(
+                _xx,
+                _yy,
+                _dir_u,
+                _dir_v,
+                _mag_norm,
+                cmap=_vf_cmaps[_pred_type],
+                clim=(0, 1),
+                scale=_vf_res * 1.2,
+                width=0.004,
+                zorder=2,
+            )
+
+        for _pred_type, _pred_label in pred_labels.items():
+            _sm = ScalarMappable(cmap=_vf_cmaps[_pred_type], norm=Normalize(0, 1))
+            _cbar = _fig.colorbar(
+                _sm, ax=_ax, fraction=0.015, pad=0.01, shrink=0.3, aspect=10
+            )
+            _cbar.set_label(_pred_label, fontsize=9)
+            _cbar.ax.tick_params(labelsize=7)
+
+    from matplotlib.lines import Line2D
+
+    _legend_handles = []
+
+    for _pred_type, _pred_label in pred_labels.items():
+        _traj = traj_paths[_pred_type]
+        _color = colors[_pred_type]
+        _legend_handles.append(
+            Line2D([0], [0], color=_color, linewidth=2, label=_pred_label)
+        )
+
+        if _focus_on:
+            _path_past = np.array([_traj[_s][_focus_i] for _s in range(_step + 1)])
+            _plot_line(
+                _ax,
+                _path_past,
+                alpha=0.9,
+                color=_color,
+                linewidth=2.5,
+                zorder=5,
+            )
+            if _step < _n_steps:
+                _path_future = np.array(
+                    [_traj[_s][_focus_i] for _s in range(_step, _n_steps + 1)]
+                )
+                _plot_line(
+                    _ax,
+                    _path_future,
+                    alpha=0.5,
+                    color=_color,
+                    linewidth=1.5,
+                    zorder=4,
+                )
+            _scatter(
+                _ax,
+                _traj[_step][_focus_i],
+                s=60,
+                c=_color,
+                edgecolors="none",
+                zorder=7,
+            )
+        else:
+            for _i in range(_n_pts):
+                _path = np.array([_traj[_s][_i] for _s in range(_step + 1)])
+                _plot_line(
+                    _ax,
+                    _path,
+                    alpha=0.5,
+                    color=_color,
+                    linewidth=0.5,
+                    zorder=3,
+                )
+            _scatter(
+                _ax,
+                _traj[_step],
+                s=10,
+                c=_color,
+                zorder=6,
+                edgecolors="white",
+                linewidths=0.3,
+            )
+
+    if _is_3d:
+        _ax.set_xlim(-_lim, _lim)
+        _ax.set_ylim(-_lim, _lim)
+        _ax.set_zlim(-_lim, _lim)
+        _ax.set_xticks([])
+        _ax.set_yticks([])
+        _ax.set_zticks([])
+    else:
+        _ax.set_xlim(-_lim, _lim)
+        _ax.set_ylim(-_lim, _lim)
+        _ax.set_aspect("equal")
+        _ax.set_xticks([])
+        _ax.set_yticks([])
+
+    _ax.legend(handles=_legend_handles, loc="upper right")
+    _fig.tight_layout()
+
+    _row3 = [traj_focus]
+    if traj_focus.value:
+        _row3.append(traj_focus_idx)
+    _title = f"## Denoising trajectories from $t_0={_t_start:.2f}$ to $t={_t_actual:.2f}$ in $D={_D}$"
+
+    _controls = [
+        mo.hstack([traj_D, traj_batch]),
+        mo.hstack([traj_noise_t, traj_view_t]),
+        mo.hstack(_row3),
+    ]
+    if not _is_3d:
+        _controls.append(traj_show_vf)
+
+    mo.vstack(
+        [
+            mo.md(_title),
+            mo.md(r"""
+        Each line traces a point's path through the reverse denoising ODE.
+        **$x$-prediction** trajectories stay close to the data manifold, while **$\epsilon$** and **$v$-prediction** trajectories can wander off-manifold.
+        """),
+            mo.vstack(_controls),
+            mo.mpl.interactive(_fig),
+        ],
+        align="center",
+    )
+    return
+
+
+@app.cell(hide_code=True)
 def _(
     colors,
     data_dim,
@@ -1531,549 +2098,6 @@ def traj_focus_idx_cell(mo, traj_clean_pts):
         show_value=True,
     )
     return (traj_focus_idx,)
-
-
-@app.cell(hide_code=True)
-def traj_viz(
-    colors,
-    data_dim,
-    data_preview,
-    dataset_dropdown,
-    dataset_noise,
-    jax,
-    jnp,
-    manifold_params,
-    mo,
-    np,
-    plt,
-    pred_labels,
-    projections,
-    results,
-    t_eps,
-    traj_D,
-    traj_batch,
-    traj_clean_pts,
-    traj_focus,
-    traj_focus_idx,
-    traj_noise_t,
-    traj_paths,
-    traj_show_vf,
-    traj_view_t,
-):
-    _n_pts = len(traj_clean_pts)
-    _n_steps = len(list(traj_paths.values())[0]) - 1
-    _step = min(int(traj_view_t.value * _n_steps), _n_steps)
-    _D = traj_D.value
-    _t_start = traj_noise_t.value
-    _t_actual = _t_start + traj_view_t.value * (1.0 - _t_start)
-    _focus_on = traj_focus.value
-    _focus_i = min(int(traj_focus_idx.value), _n_pts - 1)
-    _is_3d = data_dim == 3
-    _ds = dataset_dropdown.value
-    _mp = manifold_params.value
-    _show_vf = traj_show_vf.value and not _is_3d
-
-    def _noisy_stats(_ds, _mp, _noise, _n=10000):
-        """Get raw mean/std from a noisy sample for proper mesh alignment."""
-        _rng = np.random.default_rng(0)
-        _3d_surfaces = {
-            "torus",
-            "mobius",
-            "catenoid",
-            "saddle",
-            "horn",
-            "clifford",
-            "klein",
-        }
-        _3d_curves = {"trefoil", "helix", "double_helix"}
-        if _ds == "torus":
-            _u, _v = (
-                _rng.uniform(0, 2 * np.pi, _n),
-                _rng.uniform(0, 2 * np.pi, _n),
-            )
-            _R, _r = _mp.get("R", 1.5), _mp.get("r", 0.5)
-            _raw = np.column_stack(
-                [
-                    (_R + _r * np.cos(_v)) * np.cos(_u),
-                    (_R + _r * np.cos(_v)) * np.sin(_u),
-                    _r * np.sin(_v),
-                ]
-            )
-        elif _ds == "mobius":
-            _u = _rng.uniform(0, 2 * np.pi, _n)
-            _w = _rng.uniform(
-                -_mp.get("strip_width", 0.5), _mp.get("strip_width", 0.5), _n
-            )
-            _k = _mp.get("n_twists", 1)
-            _raw = np.column_stack(
-                [
-                    (1 + _w * np.cos(_k * _u / 2)) * np.cos(_u),
-                    (1 + _w * np.cos(_k * _u / 2)) * np.sin(_u),
-                    _w * np.sin(_k * _u / 2),
-                ]
-            )
-        elif _ds == "catenoid":
-            _ch = _mp.get("height", 1.5)
-            _u, _th = (
-                _rng.uniform(-_ch, _ch, _n),
-                _rng.uniform(0, 2 * np.pi, _n),
-            )
-            _raw = np.column_stack(
-                [np.cosh(_u) * np.cos(_th), np.cosh(_u) * np.sin(_th), _u]
-            )
-        elif _ds == "saddle":
-            _ext = _mp.get("extent", 2.0)
-            _k = _mp.get("curvature", 0.5)
-            _u, _v = (
-                _rng.uniform(-_ext, _ext, _n),
-                _rng.uniform(-_ext, _ext, _n),
-            )
-            _raw = np.column_stack([_u, _v, _k * (_u**2 - _v**2)])
-        elif _ds == "horn":
-            _length = _mp.get("length", 8.0)
-            _t, _th = (
-                _rng.uniform(1, _length, _n),
-                _rng.uniform(0, 2 * np.pi, _n),
-            )
-            _raw = np.column_stack([_t, (1 / _t) * np.cos(_th), (1 / _t) * np.sin(_th)])
-        elif _ds == "clifford":
-            _r1, _r2, _a = (
-                _mp.get("r1", 1.0),
-                _mp.get("r2", 1.0),
-                _mp.get("angle", np.pi / 4),
-            )
-            _u, _v = (
-                _rng.uniform(0, 2 * np.pi, _n),
-                _rng.uniform(0, 2 * np.pi, _n),
-            )
-            _x4, _y4, _z4, _w4 = (
-                _r1 * np.cos(_u),
-                _r1 * np.sin(_u),
-                _r2 * np.cos(_v),
-                _r2 * np.sin(_v),
-            )
-            _xr = _x4 * np.cos(_a) - _w4 * np.sin(_a)
-            _wr = _x4 * np.sin(_a) + _w4 * np.cos(_a)
-            _d = 2.5 - _wr
-            _raw = np.column_stack([_xr / _d, _y4 / _d, _z4 / _d])
-        elif _ds == "klein":
-            _u, _v = (
-                _rng.uniform(0, 2 * np.pi, _n),
-                _rng.uniform(0, 2 * np.pi, _n),
-            )
-            _neck, _body, _h, _a = (
-                _mp.get("neck", 4.0),
-                _mp.get("body", 6.0),
-                _mp.get("height", 16.0),
-                _mp.get("angle", 0.0),
-            )
-            _rk = _neck * (1 - np.cos(_u) / 2)
-            _mask = _u < np.pi
-            _x4 = np.where(
-                _mask,
-                _body * np.cos(_u) * (1 + np.sin(_u)) + _rk * np.cos(_u) * np.cos(_v),
-                _body * np.cos(_u) * (1 + np.sin(_u)) + _rk * np.cos(_v + np.pi),
-            )
-            _y4 = np.where(
-                _mask,
-                _h * np.sin(_u) + _rk * np.sin(_u) * np.cos(_v),
-                _h * np.sin(_u),
-            )
-            _z4, _w4 = _rk * np.sin(_v), _rk * np.cos(_v) * np.sin(_u)
-            _raw = np.column_stack(
-                [
-                    _x4 * np.cos(_a) - _w4 * np.sin(_a),
-                    _y4,
-                    _z4 * np.cos(_a) + _w4 * np.sin(_a),
-                ]
-            )
-        elif _ds == "trefoil":
-            _t = _rng.uniform(0, 2 * np.pi, _n)
-            _raw = np.column_stack(
-                [
-                    np.sin(_t) + 2 * np.sin(2 * _t),
-                    np.cos(_t) - 2 * np.cos(2 * _t),
-                    -np.sin(3 * _t),
-                ]
-            )
-        elif _ds == "helix":
-            _R, _p, _turns = (
-                _mp.get("radius", 1.0),
-                _mp.get("pitch", 0.5),
-                _mp.get("turns", 4),
-            )
-            _t = _rng.uniform(0, 2 * np.pi * _turns, _n)
-            _raw = np.column_stack(
-                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
-            )
-        elif _ds == "double_helix":
-            _R, _p, _turns = (
-                _mp.get("radius", 1.0),
-                _mp.get("pitch", 0.5),
-                _mp.get("turns", 4),
-            )
-            _half = _n // 2
-            _t1, _t2 = (
-                _rng.uniform(0, 2 * np.pi * _turns, _half),
-                _rng.uniform(0, 2 * np.pi * _turns, _n - _half),
-            )
-            _raw = np.column_stack(
-                [
-                    np.concatenate([_R * np.cos(_t1), _R * np.cos(_t2 + np.pi)]),
-                    np.concatenate([_R * np.sin(_t1), _R * np.sin(_t2 + np.pi)]),
-                    np.concatenate([_p * _t1 / (2 * np.pi), _p * _t2 / (2 * np.pi)]),
-                ]
-            )
-        else:
-            return None, None
-        _raw += _rng.standard_normal(_raw.shape) * _noise
-        return _raw.mean(0), np.maximum(_raw.std(0), 1e-8)
-
-    _mesh_stats = _noisy_stats(_ds, _mp, dataset_noise.value)
-
-    def _standardize_mesh(_X, _Y, _Z):
-        if _mesh_stats[0] is None:
-            return _X, _Y, _Z
-        _mean, _std = _mesh_stats
-        return (
-            (_X - _mean[0]) / _std[0],
-            (_Y - _mean[1]) / _std[1],
-            (_Z - _mean[2]) / _std[2],
-        )
-
-    def _standardize_curve(_pts):
-        if _mesh_stats[0] is None:
-            return _pts
-        _mean, _std = _mesh_stats
-        return (_pts - _mean) / _std
-
-    def _make_surface(_ds, _mp, _res=40):
-        if _ds == "torus":
-            _uu, _vv = np.meshgrid(
-                np.linspace(0, 2 * np.pi, _res),
-                np.linspace(0, 2 * np.pi, _res),
-            )
-            _R, _r = _mp.get("R", 1.5), _mp.get("r", 0.5)
-            _X = (_R + _r * np.cos(_vv)) * np.cos(_uu)
-            _Y = (_R + _r * np.cos(_vv)) * np.sin(_uu)
-            _Z = _r * np.sin(_vv)
-        elif _ds == "mobius":
-            _sw = _mp.get("strip_width", 0.5)
-            _uu, _ww = np.meshgrid(
-                np.linspace(0, 2 * np.pi, _res),
-                np.linspace(-_sw, _sw, max(_res // 2, 10)),
-            )
-            _k = _mp.get("n_twists", 1)
-            _X = (1 + _ww * np.cos(_k * _uu / 2)) * np.cos(_uu)
-            _Y = (1 + _ww * np.cos(_k * _uu / 2)) * np.sin(_uu)
-            _Z = _ww * np.sin(_k * _uu / 2)
-        elif _ds == "catenoid":
-            _ch = _mp.get("height", 1.5)
-            _uu, _th = np.meshgrid(
-                np.linspace(-_ch, _ch, _res), np.linspace(0, 2 * np.pi, _res)
-            )
-            _X = np.cosh(_uu) * np.cos(_th)
-            _Y = np.cosh(_uu) * np.sin(_th)
-            _Z = _uu
-        elif _ds == "saddle":
-            _ext = _mp.get("extent", 2.0)
-            _k = _mp.get("curvature", 0.5)
-            _uu, _vv = np.meshgrid(
-                np.linspace(-_ext, _ext, _res), np.linspace(-_ext, _ext, _res)
-            )
-            _X, _Y = _uu, _vv
-            _Z = _k * (_uu**2 - _vv**2)
-        elif _ds == "horn":
-            _length = _mp.get("length", 8.0)
-            _tt, _th = np.meshgrid(
-                np.linspace(1, _length, _res), np.linspace(0, 2 * np.pi, _res)
-            )
-            _X = _tt
-            _Y = (1 / _tt) * np.cos(_th)
-            _Z = (1 / _tt) * np.sin(_th)
-        elif _ds == "clifford":
-            _r1, _r2 = _mp.get("r1", 1.0), _mp.get("r2", 1.0)
-            _a = _mp.get("angle", np.pi / 4)
-            _uu, _vv = np.meshgrid(
-                np.linspace(0, 2 * np.pi, _res),
-                np.linspace(0, 2 * np.pi, _res),
-            )
-            _x4, _y4 = _r1 * np.cos(_uu), _r1 * np.sin(_uu)
-            _z4, _w4 = _r2 * np.cos(_vv), _r2 * np.sin(_vv)
-            _xr = _x4 * np.cos(_a) - _w4 * np.sin(_a)
-            _wr = _x4 * np.sin(_a) + _w4 * np.cos(_a)
-            _d = 2.5 - _wr
-            _X, _Y, _Z = _xr / _d, _y4 / _d, _z4 / _d
-        elif _ds == "klein":
-            _uu, _vv = np.meshgrid(
-                np.linspace(0, 2 * np.pi, _res),
-                np.linspace(0, 2 * np.pi, _res),
-            )
-            _neck, _body = _mp.get("neck", 4.0), _mp.get("body", 6.0)
-            _h, _a = _mp.get("height", 16.0), _mp.get("angle", 0.0)
-            _rk = _neck * (1 - np.cos(_uu) / 2)
-            _mask = _uu < np.pi
-            _x4 = np.where(
-                _mask,
-                _body * np.cos(_uu) * (1 + np.sin(_uu))
-                + _rk * np.cos(_uu) * np.cos(_vv),
-                _body * np.cos(_uu) * (1 + np.sin(_uu)) + _rk * np.cos(_vv + np.pi),
-            )
-            _y4 = np.where(
-                _mask,
-                _h * np.sin(_uu) + _rk * np.sin(_uu) * np.cos(_vv),
-                _h * np.sin(_uu),
-            )
-            _z4 = _rk * np.sin(_vv)
-            _w4 = _rk * np.cos(_vv) * np.sin(_uu)
-            _X = _x4 * np.cos(_a) - _w4 * np.sin(_a)
-            _Y = _y4
-            _Z = _z4 * np.cos(_a) + _w4 * np.sin(_a)
-        else:
-            return None
-        return _standardize_mesh(_X, _Y, _Z)
-
-    def _make_curve(_ds, _mp):
-        if _ds == "trefoil":
-            _t = np.linspace(0, 2 * np.pi, 500)
-            _pts = np.column_stack(
-                [
-                    np.sin(_t) + 2 * np.sin(2 * _t),
-                    np.cos(_t) - 2 * np.cos(2 * _t),
-                    -np.sin(3 * _t),
-                ]
-            )
-        elif _ds == "helix":
-            _R, _p, _turns = (
-                _mp.get("radius", 1.0),
-                _mp.get("pitch", 0.5),
-                _mp.get("turns", 4),
-            )
-            _t = np.linspace(0, 2 * np.pi * _turns, 500)
-            _pts = np.column_stack(
-                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
-            )
-        elif _ds == "double_helix":
-            _R, _p, _turns = (
-                _mp.get("radius", 1.0),
-                _mp.get("pitch", 0.5),
-                _mp.get("turns", 4),
-            )
-            _t = np.linspace(0, 2 * np.pi * _turns, 300)
-            _h1 = np.column_stack(
-                [_R * np.cos(_t), _R * np.sin(_t), _p * _t / (2 * np.pi)]
-            )
-            _h2 = np.column_stack(
-                [
-                    _R * np.cos(_t + np.pi),
-                    _R * np.sin(_t + np.pi),
-                    _p * _t / (2 * np.pi),
-                ]
-            )
-            _pts = np.vstack([_h1, _h2])
-        else:
-            return None
-        return _standardize_curve(_pts)
-
-    def _scatter(_ax, _data, **kwargs):
-        if _data.ndim == 1:
-            _data = _data.reshape(1, -1)
-        if _is_3d:
-            _ax.scatter(_data[:, 0], _data[:, 1], _data[:, 2], **kwargs)
-        else:
-            _ax.scatter(_data[:, 0], _data[:, 1], **kwargs)
-
-    def _plot_line(_ax, _data, **kwargs):
-        if _is_3d:
-            _ax.plot(_data[:, 0], _data[:, 1], _data[:, 2], **kwargs)
-        else:
-            _ax.plot(_data[:, 0], _data[:, 1], **kwargs)
-
-    _fig = plt.figure(figsize=(10, 8))
-    _ax = _fig.add_subplot(111, projection="3d") if _is_3d else _fig.add_subplot(111)
-    _lim = np.abs(data_preview).max() * 1.1
-
-    if _is_3d:
-        _mesh = _make_surface(_ds, _mp)
-        if _mesh is not None:
-            _ax.plot_surface(
-                _mesh[0],
-                _mesh[1],
-                _mesh[2],
-                alpha=0.12,
-                color="lavender",
-                edgecolor="plum",
-                linewidth=0.3,
-                rstride=2,
-                cstride=2,
-                zorder=0,
-            )
-        else:
-            _curve = _make_curve(_ds, _mp)
-            if _curve is not None:
-                _plot_line(
-                    _ax,
-                    _curve,
-                    color="lavender",
-                    linewidth=3,
-                    alpha=0.6,
-                    zorder=0,
-                )
-
-    _scatter(_ax, data_preview, s=1, alpha=0.05, c=colors["ground_truth"], zorder=1)
-
-    # Velocity field (2D only)
-    if _show_vf:
-        _vf_res = 15
-        _P_jnp = jnp.array(projections[_D])
-        _te = t_eps.value
-        _xs = np.linspace(-_lim, _lim, _vf_res)
-        _ys = np.linspace(-_lim, _lim, _vf_res)
-        _xx, _yy = np.meshgrid(_xs, _ys)
-        _grid_2d = np.stack([_xx.ravel(), _yy.ravel()], axis=-1).astype(np.float32)
-        _z_grid_D = jnp.array(_grid_2d) @ _P_jnp.T
-        _t_arr_vf = jnp.full((_grid_2d.shape[0], 1), _t_actual)
-
-        _vf_max = 1e-8
-        _vf_data = {}
-        for _pred_type in pred_labels:
-            _model = results[(_D, _pred_type)]["model"]
-            _pred = jax.vmap(_model)(_z_grid_D, _t_arr_vf)
-            if _pred_type == "x_pred":
-                _v_D = (_pred - _z_grid_D) / jnp.maximum(1 - _t_actual, _te)
-            elif _pred_type == "eps_pred":
-                _v_D = (_z_grid_D - _pred) / jnp.maximum(_t_actual, _te)
-            else:
-                _v_D = _pred
-            _v_2d = np.asarray(_v_D @ _P_jnp)
-            _vf_data[_pred_type] = _v_2d
-            _vf_max = max(_vf_max, np.sqrt((_v_2d**2).sum(axis=1)).max())
-
-        for _pred_type in pred_labels:
-            _v_2d = _vf_data[_pred_type]
-            _u_arr = _v_2d[:, 0].reshape(_vf_res, _vf_res)
-            _v_arr = _v_2d[:, 1].reshape(_vf_res, _vf_res)
-            _mag = np.sqrt(_u_arr**2 + _v_arr**2)
-            _dir_u = _u_arr / np.maximum(_mag, 1e-8)
-            _dir_v = _v_arr / np.maximum(_mag, 1e-8)
-            _mag_norm = _mag / _vf_max
-            _ax.quiver(
-                _xx,
-                _yy,
-                _dir_u,
-                _dir_v,
-                color=colors[_pred_type],
-                alpha=np.clip(_mag_norm * 1.0, 0.1, 1.0),
-                scale=_vf_res * 1.2,
-                width=0.004,
-                zorder=2,
-            )
-
-    from matplotlib.lines import Line2D
-
-    _legend_handles = []
-
-    for _pred_type, _pred_label in pred_labels.items():
-        _traj = traj_paths[_pred_type]
-        _color = colors[_pred_type]
-        _legend_handles.append(
-            Line2D([0], [0], color=_color, linewidth=2, label=_pred_label)
-        )
-
-        if _focus_on:
-            _path_past = np.array([_traj[_s][_focus_i] for _s in range(_step + 1)])
-            _plot_line(
-                _ax,
-                _path_past,
-                alpha=0.9,
-                color=_color,
-                linewidth=2.5,
-                zorder=5,
-            )
-            if _step < _n_steps:
-                _path_future = np.array(
-                    [_traj[_s][_focus_i] for _s in range(_step, _n_steps + 1)]
-                )
-                _plot_line(
-                    _ax,
-                    _path_future,
-                    alpha=0.5,
-                    color=_color,
-                    linewidth=1.5,
-                    zorder=4,
-                )
-            _scatter(
-                _ax,
-                _traj[_step][_focus_i],
-                s=60,
-                c=_color,
-                edgecolors="none",
-                zorder=7,
-            )
-        else:
-            for _i in range(_n_pts):
-                _path = np.array([_traj[_s][_i] for _s in range(_step + 1)])
-                _plot_line(
-                    _ax,
-                    _path,
-                    alpha=0.5,
-                    color=_color,
-                    linewidth=0.5,
-                    zorder=3,
-                )
-            _scatter(
-                _ax,
-                _traj[_step],
-                s=10,
-                c=_color,
-                zorder=6,
-                edgecolors="white",
-                linewidths=0.3,
-            )
-
-    if _is_3d:
-        _ax.set_xlim(-_lim, _lim)
-        _ax.set_ylim(-_lim, _lim)
-        _ax.set_zlim(-_lim, _lim)
-        _ax.set_xticks([])
-        _ax.set_yticks([])
-        _ax.set_zticks([])
-    else:
-        _ax.set_xlim(-_lim, _lim)
-        _ax.set_ylim(-_lim, _lim)
-        _ax.set_aspect("equal")
-        _ax.set_xticks([])
-        _ax.set_yticks([])
-
-    _ax.legend(handles=_legend_handles, loc="upper right")
-    _fig.tight_layout()
-
-    _row3 = [traj_focus]
-    if traj_focus.value:
-        _row3.append(traj_focus_idx)
-    _title = f"## Denoising trajectories from $t_0={_t_start:.2f}$ to $t={_t_actual:.2f}$ in $D={_D}$"
-
-    _controls = [
-        mo.hstack([traj_D, traj_batch]),
-        mo.hstack([traj_noise_t, traj_view_t]),
-        mo.hstack(_row3),
-    ]
-    if not _is_3d:
-        _controls.append(traj_show_vf)
-
-    mo.vstack(
-        [
-            mo.md(_title),
-            mo.md(r"""
-        Each line traces a point's path through the reverse denoising ODE.
-        **$x$-prediction** trajectories stay close to the data manifold, while **$\epsilon$** and **$v$-prediction** trajectories can wander off-manifold.
-        """),
-            mo.vstack(_controls),
-            mo.mpl.interactive(_fig),
-        ],
-        align="center",
-    )
-    return
 
 
 if __name__ == "__main__":
