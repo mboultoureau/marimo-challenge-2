@@ -21,6 +21,7 @@ dependencies = [
     "jax[cuda13]>=0.10.2",
     "equinox>=0.13.8",
     "optax>=0.2.8",
+    "scikit-image>=0.26.0",
 ]
 license = {file = "LICENSE"}
 authors = [
