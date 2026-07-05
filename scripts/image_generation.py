@@ -768,13 +768,23 @@ def _(BytesIO, CLASSES, Image, base64, data, np):
 
 
 @app.cell
-def _(CLASSES, N, mo):
+def _(N, mo):
+    get_step, set_step = mo.state(0)
+
     step_slider = mo.ui.slider(
-        0, N - 1, value=0,
+        0, N - 1, 
+        value=get_step(),       # Relie le slider à l'état
+        on_change=set_step,     # Met à jour l'état quand le slider bouge
         label="Denoising step",
         full_width=True,
     )
 
+    controls = mo.vstack([step_slider], gap="0.25rem")
+    return controls, set_step, step_slider
+
+
+@app.cell
+def _(CLASSES, mo):
     class_checkboxes = mo.ui.multiselect(
         options=list(CLASSES.values()),
         value=list(CLASSES.values()),
@@ -786,20 +796,17 @@ def _(CLASSES, N, mo):
     show_vector = mo.ui.checkbox(value=True,  label="Displacement vector")
     show_final  = mo.ui.checkbox(value=True,  label="Final point ◆")
 
-    controls    = mo.vstack([step_slider], gap="0.25rem")
     options_row = mo.vstack([
         class_checkboxes,
         mo.vstack([show_ghost, show_sphere, show_vector, show_final], gap="0.25rem"),
     ], gap="1rem")
     return (
         class_checkboxes,
-        controls,
         options_row,
         show_final,
         show_ghost,
         show_sphere,
         show_vector,
-        step_slider,
     )
 
 
@@ -1062,58 +1069,105 @@ def _(mo):
 
 
 @app.cell
-def _(CLASSES, N, THUMB_EVERY, mo, step_slider, thumbs_b64):
+def _(CLASSES, N, THUMB_EVERY, mo, set_step, step_slider, thumbs_b64):
     _ref_cid  = list(CLASSES.keys())[0]
     _b64_list = thumbs_b64[_ref_cid]
     _n_thumbs = len(_b64_list)
 
-    _max_display = 25
+    _max_display = 15
     _stride      = max(1, _n_thumbs // _max_display)
     _disp_idxs   = list(range(0, _n_thumbs, _stride))
-    _cur_thumb   = min(step_slider.value // THUMB_EVERY, _n_thumbs - 1)
+
+    # S'assurer que la toute dernière image est toujours incluse
+    if _disp_idxs[-1] != _n_thumbs - 1:
+        _disp_idxs.append(_n_thumbs - 1)
+
+    _cur_thumb = min(step_slider.value // THUMB_EVERY, _n_thumbs - 1)
+
+    # Fonction pour capturer correctement la valeur dans la boucle
+    def make_handler(target):
+        return lambda _: set_step(target)
 
     _cells = []
-    for _ti in _disp_idxs:
+    for _i, _ti in enumerate(_disp_idxs):
         _step_for_thumb = min(_ti * THUMB_EVERY, N - 1)
-        _pct            = int(_step_for_thumb / (N - 1) * 100)
-        _is_cur         = abs(_ti - _cur_thumb) <= 1
-        _border         = "2px solid rgba(167,139,250,0.9)" if _is_cur else "1px solid rgba(80,70,130,0.3)"
-        _op             = "1.0" if _is_cur else "0.5"
+    
+        # Forcer la première image à 0% et la dernière à 100%
+        if _i == 0:
+            _pct = 0
+        elif _i == len(_disp_idxs) - 1:
+            _pct = 100
+        else:
+            _pct = int((_step_for_thumb / (N - 1)) * 100)
+        
+        _is_cur = abs(_ti - _cur_thumb) <= 1
+        _border = "2px solid rgba(167,139,250,0.9)" if _is_cur else "2px solid transparent"
+        _op     = "1.0" if _is_cur else "0.6"
 
+        # Création du vrai bouton natif, mais avec un label vide !
+        _btn = mo.ui.button(label=" ", on_change=make_handler(_step_for_thumb))
+
+        # On place le bouton dans un conteneur invisible par-dessus l'image
         _cells.append(f"""
-        <div style="display:inline-block; position:relative; cursor:pointer; margin:0 2px;"
-             title="Step {_step_for_thumb}"
-             onclick="(function(){{
-                 var candidates = [
-                     document.querySelector('input[data-testid=\\"slider\\"]'),
-                     document.querySelector('.marimo-slider input[type=range]'),
-                     document.querySelector('input[type=range]')
-                 ];
-                 var s = candidates.find(function(el){{return el !== null;}});
-                 if(s){{
-                     s.value = {_step_for_thumb};
-                     s.dispatchEvent(new Event('input', {{bubbles:true}}));
-                     s.dispatchEvent(new Event('change', {{bubbles:true}}));
-                 }}
-             }})()">
+        <div class="filmstrip-item" style="display:inline-block; position:relative; margin:0 6px; transition: transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);"
+             title="Étape {_step_for_thumb} ({_pct}%)">
+        
+            <!-- COUCHE INVISIBLE : Le bouton natif Marimo -->
+            <div class="hidden-btn" style="position:absolute; top:0; left:0; width:100%; height:100%; z-index:10; opacity:0; overflow:hidden;">
+                {_btn}
+            </div>
+        
+            <!-- COUCHE VISUELLE : L'image et le texte -->
             <img src="data:image/png;base64,{_b64_list[_ti]}"
-                 width="38" height="38"
-                 style="border-radius:4px; border:{_border}; opacity:{_op};
-                        display:block; image-rendering:pixelated;"/>
-            <div style="font-size:8px; color:rgba(140,130,190,0.5); text-align:center; margin-top:2px;">{_pct}%</div>
+                 width="110" height="110"
+                 style="border-radius:8px; border:{_border}; opacity:{_op};
+                        display:block; image-rendering:pixelated; transition: all 0.2s ease; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"/>
+            <div style="font-size:14px; color:rgba(140,130,190,0.8); text-align:center; margin-top:6px; font-weight: 600; transition: color 0.2s ease;">{_pct}%</div>
         </div>
         """)
 
-    mo.Html(f"""
-    <div style="
-        background:rgba(8,8,22,0.9);
-        border:0.5px solid rgba(80,70,140,0.35);
-        border-radius:10px;
-        padding:10px 14px 8px;
+    _html_output = mo.Html(f"""
+    <style>
+    /* Scrollbar */
+    .filmstrip-container::-webkit-scrollbar {{ height: 8px; }}
+    .filmstrip-container::-webkit-scrollbar-track {{ background: rgba(30, 20, 50, 0.5); border-radius: 4px; }}
+    .filmstrip-container::-webkit-scrollbar-thumb {{ background: rgba(100, 90, 180, 0.6); border-radius: 4px; }}
+    .filmstrip-container::-webkit-scrollbar-thumb:hover {{ background: rgba(167, 139, 250, 0.8); }}
+
+    /* Effets de Hover visuels */
+    .filmstrip-item:hover {{ transform: scale(1.15) translateY(-4px); z-index: 10; }}
+    .filmstrip-item:hover img {{ opacity: 1.0 !important; border-color: rgba(167, 139, 250, 0.9) !important; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.6) !important; }}
+
+    /* Ne pas colorer le bouton caché, seulement le texte visible */
+    .filmstrip-item:hover div:not(.hidden-btn) {{ color: rgba(167, 139, 250, 1.0) !important; }}
+
+    /* Forcer le bouton natif Marimo à prendre 100% de la zone de clic */
+    .hidden-btn marimo-ui-element, .hidden-btn button {{
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        min-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        cursor: pointer !important;
+    }}
+    </style>
+
+    <div class="filmstrip-container" style="
+        background:rgba(8,8,22,0.95);
+        border:1px solid rgba(80,70,140,0.4);
+        border-radius:12px;
+        padding:20px 16px 12px;
         overflow-x:auto;
         white-space:nowrap;
+        display:flex;
+        align-items:center;
     ">{''.join(_cells)}</div>
     """)
+
+    _html_output
     return
 
 
@@ -1251,6 +1305,7 @@ def _(
         )
     return
 
+
 @app.cell
 def _(CLASSES, METHOD, N, data, get_phase, mo, np, speeds_all, step_slider):
     _step_m = step_slider.value
@@ -1262,7 +1317,7 @@ def _(CLASSES, METHOD, N, data, get_phase, mo, np, speeds_all, step_slider):
         _speed  = float(speeds_all[_cid][min(_step_m, len(speeds_all[_cid]) - 1)])
         _dist   = float(np.linalg.norm(_coords[_step_m] - _coords[-1]))
         _phase, _ = get_phase(_step_m, _cid)
-        
+
         _table_data.append({
             "Class": _cname,
             "Current σ": round(_sigma, 4),
@@ -1276,9 +1331,10 @@ def _(CLASSES, METHOD, N, data, get_phase, mo, np, speeds_all, step_slider):
         mo.ui.table(_table_data),
         mo.md(f"> **Projection space:** {METHOD}")
     ])
-    
+
     _layout
     return
+
 
 if __name__ == "__main__":
     app.run()
