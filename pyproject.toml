@@ -22,6 +22,7 @@ dependencies = [
     "equinox>=0.13.8",
     "optax>=0.2.8",
     "scikit-image>=0.26.0",
+    "umap-learn>=0.5.12",
 ]
 license = {file = "LICENSE"}
 authors = [
