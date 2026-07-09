@@ -44,14 +44,13 @@ def _():
     import equinox as eqx
     import optax
     import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
     from sklearn.datasets import make_swiss_roll, make_moons
 
     import torch
     from torchvision.transforms.functional import to_pil_image
 
-    # --- Part 2 (continued): real JiT image-generation trajectory explorer ---
     import math
-    from math import pi
     from torch import nn
     import torch.nn.functional as F
     from einops import rearrange, repeat
@@ -60,103 +59,46 @@ def _():
     import base64
     from io import BytesIO
 
+    from huggingface_hub import hf_hub_download
+
+    model_path = None
+    print("Downloading JiT-B/16 weights from HuggingFace...")
+    _dl_t0 = time.time()
     try:
-        from huggingface_hub import hf_hub_download
-    except ImportError:
-        hf_hub_download = None
+        model_path = hf_hub_download(
+            repo_id="avonne/Just-image-Transformer",
+            filename="jit-b-16/checkpoint-last.pth",
+        )
+        print(
+            f"Finished downloading JiT-B/16 weights in "
+            f"{time.time() - _dl_t0:.1f}s -> {model_path}"
+        )
+    except Exception as _dl_err:
+        print(f"Failed to download JiT-B/16 weights: {_dl_err}")
     return (
         BytesIO,
         F,
         Image,
+        Line2D,
         base64,
         eqx,
-        hf_hub_download,
         jax,
         jnp,
         make_moons,
         make_swiss_roll,
         math,
         mo,
+        model_path,
         nn,
         np,
         optax,
-        pi,
         plt,
         rearrange,
         repeat,
-        time,
         to_pil_image,
         torch,
         umap,
     )
-
-
-@app.cell(hide_code=True)
-def _(
-    HIDDEN_WIDTH,
-    T_EPS,
-    hf_hub_download,
-    jax,
-    make_projection,
-    np,
-    pred_types,
-    time,
-    train_model,
-):
-    # Pre-JIT warmup: trigger JAX compilation for the fixed (D, pred_type)
-    # combinations used below, so the first "Train all models" click doesn't
-    # also pay the JIT-compilation cost. Uses synthetic placeholder data (not
-    # the live dataset), so this cell has no reactive UI dependencies and only
-    # ever runs once, at startup.
-    print("Warming up JAX JIT cache...")
-    _warmup_t0 = time.time()
-    _warmup_rng = np.random.default_rng(0)
-    _warmup_key = jax.random.PRNGKey(0)
-    _warmup_D_by_dim = {2: [2, 8, 16, 512], 3: [3, 8, 16, 512]}
-    _warmup_seen_D = set()
-    for _wdim, _wDs in _warmup_D_by_dim.items():
-        _warmup_data = _warmup_rng.standard_normal((10000, _wdim)).astype(np.float32)
-        for _wD in _wDs:
-            if _wD in _warmup_seen_D:
-                continue
-            _warmup_seen_D.add(_wD)
-            _warmup_P = make_projection(_wD, d=_wdim, seed=_wD)
-            for _wpred in pred_types:
-                _warmup_key, _wk = jax.random.split(_warmup_key)
-                train_model(
-                    _wpred,
-                    _wD,
-                    _warmup_data,
-                    _warmup_P,
-                    _wk,
-                    n_steps=50,
-                    hidden=HIDDEN_WIDTH,
-                    t_eps=T_EPS,
-                    noise_scale=1.0,
-                )
-    print(f"JAX JIT warmup done in {time.time() - _warmup_t0:.1f}s")
-
-    # Prefetch the JiT-B/16 checkpoint eagerly at notebook startup so the
-    # "Generate trajectories" button below doesn't also have to wait on a
-    # large HuggingFace download on first click. Any failure (offline, missing
-    # huggingface_hub, ...) is swallowed here; the generation cell below
-    # degrades gracefully if `model_path` ends up unset.
-    model_path = None
-    if hf_hub_download is not None:
-        print("Downloading JiT-B/16 weights from HuggingFace...")
-        _dl_t0 = time.time()
-        try:
-            model_path = hf_hub_download(
-                repo_id="avonne/Just-image-Transformer",
-                filename="jit-b-16/checkpoint-last.pth",
-            )
-            print(
-                f"Finished downloading JiT-B/16 weights in "
-                f"{time.time() - _dl_t0:.1f}s -> {model_path}"
-            )
-        except Exception as _dl_err:
-            print(f"Failed to download JiT-B/16 weights: {_dl_err}")
-    return (model_path,)
 
 
 @app.cell(hide_code=True)
@@ -165,6 +107,8 @@ def _(mo):
     # Back to Basics: Let Denoising Generative Models Denoise
 
     From Li & He, 2025 ([arXiv:2511.13720](https://arxiv.org/abs/2511.13720))
+
+    > Loading the notebook may take a minute or two as it loads the model weights.
     """)
     return
 
@@ -175,11 +119,11 @@ def _(mo):
     ## Part 1 — What should the network really predict?
 
     The **manifold hypothesis** states natural data lies on a low-dimensional manifold while noise occupies the ambient space.
-    Current trend in diffusion models rely on network predicting **noise** ($\epsilon$-prediction) or **flow velocity** ($v$-prediction) which targets high-dimensional space. <br>
+    The current trend in diffusion models relies on networks predicting **noise** ($\epsilon$-prediction) or **flow velocity** ($v$-prediction), which live in the high-dimensional ambient space. <br>
     However Li & He break away from this approach by proposing networks that predict **clean data** ($x$-prediction).
     The upside is that the models only have to capture low-dimensional structures corresponding to the manifold the data belongs to.
 
-    In this part we embed 2D or 3D manifolds into higher-dimensional spaces via a random orthogonal projection, then train small MLP to generate samples using three prediction :
+    In this part we embed 2D or 3D manifolds into higher-dimensional spaces via a random orthogonal projection, then train a small MLP to generate samples using three prediction targets:
 
     - **$x$-prediction**: directly predict clean data (on-manifold)
     - **$\epsilon$-prediction**: predict the noise (off-manifold)
@@ -225,94 +169,6 @@ def _(mo):
         align="center",
     )
     return dataset_dropdown, n_samples, noise_scale, seed
-
-
-@app.cell(hide_code=True)
-def _(dataset_dropdown):
-    _3d_datasets = {"mobius", "horn", "klein"}
-    data_dim = 3 if dataset_dropdown.value in _3d_datasets else 2
-    D_values = [data_dim, 8, 16, 512]
-    return D_values, data_dim
-
-
-@app.cell(hide_code=True)
-def _(dataset_dropdown, mo, np):
-    _ds = dataset_dropdown.value
-    if _ds == "mobius":
-        manifold_params = mo.ui.dictionary(
-            {
-                "n_twists": mo.ui.slider(
-                    start=1,
-                    stop=5,
-                    step=1,
-                    value=1,
-                    label="Half-twists",
-                    show_value=True,
-                ),
-                "strip_width": mo.ui.slider(
-                    start=0.2,
-                    stop=1.5,
-                    step=0.1,
-                    value=0.5,
-                    label="Strip width",
-                    show_value=True,
-                ),
-            }
-        )
-    elif _ds == "horn":
-        manifold_params = mo.ui.dictionary(
-            {
-                "length": mo.ui.slider(
-                    start=1.0,
-                    stop=20.0,
-                    step=0.5,
-                    value=8.0,
-                    label="Length",
-                    show_value=True,
-                ),
-            }
-        )
-    elif _ds == "klein":
-        manifold_params = mo.ui.dictionary(
-            {
-                "neck": mo.ui.slider(
-                    start=1.0,
-                    stop=8.0,
-                    step=0.5,
-                    value=4.0,
-                    label="Neck width",
-                    show_value=True,
-                ),
-                "body": mo.ui.slider(
-                    start=3.0,
-                    stop=10.0,
-                    step=0.5,
-                    value=6.0,
-                    label="Body size",
-                    show_value=True,
-                ),
-                "height": mo.ui.slider(
-                    start=8.0,
-                    stop=24.0,
-                    step=1.0,
-                    value=16.0,
-                    label="Height",
-                    show_value=True,
-                ),
-                "angle": mo.ui.slider(
-                    start=0.0,
-                    stop=round(float(2 * np.pi), 2),
-                    step=0.05,
-                    value=0.0,
-                    label="4D rotation angle",
-                    show_value=True,
-                ),
-            }
-        )
-    else:
-        # two_moons has no additional shape parameters beyond noise/samples/seed.
-        manifold_params = mo.ui.dictionary({})
-    return (manifold_params,)
 
 
 @app.cell(hide_code=True)
@@ -561,7 +417,7 @@ def _(D_values, colors, mo, plt, pred_labels, results):
         _ax.set_ylabel("v-loss")
         _ax.legend(loc="upper right")
         if _row == _nrows - 1:
-            _ax.set_xlabel("Step (x50)")
+            _ax.set_xlabel("Training step (×50)")
 
     for _j in range(len(D_values), _nrows * _ncols):
         axes_loss[divmod(_j, _ncols)].axis("off")
@@ -656,6 +512,7 @@ def _(
 
 @app.cell(hide_code=True)
 def traj_viz(
+    Line2D,
     colors,
     data_dim,
     data_preview,
@@ -840,8 +697,6 @@ def traj_viz(
             )
 
     _scatter(_ax, data_preview, s=1, alpha=0.05, c=colors["ground_truth"], zorder=1)
-
-    from matplotlib.lines import Line2D
 
     _legend_handles = []
 
@@ -1049,7 +904,7 @@ def _(
         Each model predicts either $\hat{x}$, $\hat{\epsilon}$, or $\hat{v}$.
         The panels below shows the **time-varying** velocity field for those prediction types.
 
-        We can recover the velocity field $\hat{v}$ from the predicted $\hat{x}$ or $\hat{\epsilon}$, we use the following relationships:
+        We can recover the velocity field $\hat{v}$ from the predicted $\hat{x}$ or $\hat{\epsilon}$ with the following relationships:
         - $\hat{v}(\hat{x}) = (\hat{x} - z_t) / (1 - t)$
         - $\hat{v}(\hat{\epsilon}) = (z_t - \hat{\epsilon}) / t$
 
@@ -1066,6 +921,94 @@ def _(
         ],
     )
     return
+
+
+@app.cell(hide_code=True)
+def _(dataset_dropdown):
+    _3d_datasets = {"mobius", "horn", "klein"}
+    data_dim = 3 if dataset_dropdown.value in _3d_datasets else 2
+    D_values = [data_dim, 8, 16, 512]
+    return D_values, data_dim
+
+
+@app.cell(hide_code=True)
+def _(dataset_dropdown, mo, np):
+    _ds = dataset_dropdown.value
+    if _ds == "mobius":
+        manifold_params = mo.ui.dictionary(
+            {
+                "n_twists": mo.ui.slider(
+                    start=1,
+                    stop=5,
+                    step=1,
+                    value=1,
+                    label="Half-twists",
+                    show_value=True,
+                ),
+                "strip_width": mo.ui.slider(
+                    start=0.2,
+                    stop=1.5,
+                    step=0.1,
+                    value=0.5,
+                    label="Strip width",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "horn":
+        manifold_params = mo.ui.dictionary(
+            {
+                "length": mo.ui.slider(
+                    start=1.0,
+                    stop=20.0,
+                    step=0.5,
+                    value=8.0,
+                    label="Length",
+                    show_value=True,
+                ),
+            }
+        )
+    elif _ds == "klein":
+        manifold_params = mo.ui.dictionary(
+            {
+                "neck": mo.ui.slider(
+                    start=1.0,
+                    stop=8.0,
+                    step=0.5,
+                    value=4.0,
+                    label="Neck width",
+                    show_value=True,
+                ),
+                "body": mo.ui.slider(
+                    start=3.0,
+                    stop=10.0,
+                    step=0.5,
+                    value=6.0,
+                    label="Body size",
+                    show_value=True,
+                ),
+                "height": mo.ui.slider(
+                    start=8.0,
+                    stop=24.0,
+                    step=1.0,
+                    value=16.0,
+                    label="Height",
+                    show_value=True,
+                ),
+                "angle": mo.ui.slider(
+                    start=0.0,
+                    stop=round(float(2 * np.pi), 2),
+                    step=0.05,
+                    value=0.0,
+                    label="4D rotation angle",
+                    show_value=True,
+                ),
+            }
+        )
+    else:
+        # two_moons has no additional shape parameters beyond noise/samples/seed.
+        manifold_params = mo.ui.dictionary({})
+    return (manifold_params,)
 
 
 @app.cell(hide_code=True)
@@ -1558,7 +1501,6 @@ def _(eqx, jax, jnp, make_moons, make_swiss_roll, np, optax):
         n_sample_steps,
         n_steps,
         pred_labels,
-        pred_types,
         train_model,
     )
 
@@ -1680,7 +1622,7 @@ def _(mo):
     ## Part 2 — From noise to a real image with Just image Transformers
 
     The proposed architecture, **Just image Transformers** (JiT) is nothing more than a plain Vision Transformer on patches of raw pixels.<br>
-    The paper trains JiT on either $256 \times 256$  or $512 \times 512$ ImagetNet dataset.
+    The paper trains JiT on ImageNet at $256 \times 256$, $512 \times 512$ and $1024 \times 1024$ resolutions.
 
     In our case we will be using pre-trained [JiT-B/16](https://huggingface.co/avonne/Just-image-Transformer) to generate $256 \times 256$ images on 5 different classes:
     - Golden retriever
@@ -1689,6 +1631,107 @@ def _(mo):
     - Giant panda
     - Daisy
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(JIT_IMG_SIZE, JIT_NOISE_SCALE, mo, noise_seed, to_pil_image, torch):
+    _g = torch.Generator().manual_seed(int(noise_seed.value))
+    image_tensor = JIT_NOISE_SCALE * torch.randn(
+        1, 3, JIT_IMG_SIZE, JIT_IMG_SIZE, generator=_g
+    )
+    # `image_tensor` is pure Gaussian noise at the real JiT-B/16's input
+    # resolution. This exact tensor is reused, unmodified, as the starting
+    # point z_0 for the real model's denoising trajectory below.
+    noise_preview = ((image_tensor[0].clamp(-3, 3) + 3) / 6).clamp(0, 1)
+    img_np = noise_preview.permute(1, 2, 0).numpy()
+
+    mo.vstack(
+        [
+            mo.md(rf"""
+    ### Generating noise
+
+    It all starts with pure Gaussian noise at a ${JIT_IMG_SIZE} \times {JIT_IMG_SIZE}$ resolution. But we will need to process this noisy image beforehand.
+    """),
+            noise_seed,
+            mo.image(src=to_pil_image(noise_preview)),
+        ],
+        align="center",
+    )
+    return image_tensor, img_np
+
+
+@app.cell(hide_code=True)
+def _(
+    grid_html,
+    grid_size,
+    img_np,
+    mo,
+    patch_size,
+    plt,
+    pos_embed,
+    row_slider,
+):
+    _columns = [
+        mo.vstack(
+            [mo.md("Noise Patch"), mo.md("Positional embedding")],
+            justify="space-around",
+        )
+    ]
+    for _c in range(grid_size):
+        _patch = img_np[
+            row_slider.value * patch_size : (row_slider.value + 1) * patch_size,
+            _c * patch_size : (_c + 1) * patch_size,
+            :,
+        ]
+        _fig_pa, _ax_pa = plt.subplots(figsize=(1, 1))
+        _ax_pa.imshow(_patch, aspect="auto")
+        _ax_pa.set_xticks([])
+        _ax_pa.set_yticks([])
+        _fig_pa.tight_layout(pad=0.05)
+        _patch_html = mo.as_html(_fig_pa)
+        plt.close(_fig_pa)
+
+        _pe_vec = pos_embed[row_slider.value, _c, :].reshape(24, 32)
+        _fig_pe, _ax_pe = plt.subplots(figsize=(24 / 32, 1))
+        _ax_pe.imshow(_pe_vec, cmap="turbo", aspect="auto")
+        _ax_pe.set_xticks([])
+        _ax_pe.set_yticks([])
+        _fig_pe.tight_layout(pad=0.05)
+        _pe_html = mo.as_html(_fig_pe)
+        plt.close(_fig_pe)
+
+        _columns.append(
+            mo.vstack([_patch_html, _pe_html], align="center", gap="0.15rem")
+        )
+
+    mo.vstack(
+        [
+            mo.md(
+                f"The image is separated into a {grid_size}×{grid_size} grid of {patch_size}×{patch_size} patches. Each patch is flattened into a token, and associated with a positional embedding so the Transformer knows where each patch came from."
+            ),
+            mo.hstack(
+                [
+                    grid_html.style(
+                        {
+                            "width": "5in",
+                            "height": "5in",
+                        }
+                    ),
+                    row_slider,
+                ],
+                align="center",
+            ),
+            mo.md(
+                f"Below is one full row of ${patch_size} \\times {patch_size}$ patches, each with its 2D sincos positional embedding."
+            ),
+            mo.md(
+                r"The embeddings are $\mathbb{R}^{768}$ vectors reshaped into $24 \times 32$ images."
+            ),
+            mo.hstack(_columns, justify="center"),
+        ],
+        align="center",
+    )
     return
 
 
@@ -1759,123 +1802,19 @@ def _(JIT_IMG_SIZE, grid_size, img_np, mo, patch_size, plt, row_slider):
     _fig_grid.tight_layout(pad=0.1)
     grid_html = mo.as_html(_fig_grid)
     plt.close(_fig_grid)
-
     return (grid_html,)
 
 
 @app.cell(hide_code=True)
-def _(JIT_IMG_SIZE, JIT_NOISE_SCALE, mo, noise_seed, to_pil_image, torch):
-    _g = torch.Generator().manual_seed(int(noise_seed.value))
-    image_tensor = JIT_NOISE_SCALE * torch.randn(
-        1, 3, JIT_IMG_SIZE, JIT_IMG_SIZE, generator=_g
-    )
-    # `image_tensor` is pure Gaussian noise at the real JiT-B/16's input
-    # resolution. This exact tensor is reused, unmodified, as the starting
-    # point z_0 for the real model's denoising trajectory below.
-    noise_preview = ((image_tensor[0].clamp(-3, 3) + 3) / 6).clamp(0, 1)
-    img_np = noise_preview.permute(1, 2, 0).numpy()
-
-    mo.vstack(
-        [
-            mo.md(rf"""
-    ### Generating noise
-
-    It all starts with pure Gaussian noise at a ${JIT_IMG_SIZE} \times {JIT_IMG_SIZE}$ resolution. But we will need to process this noisy image beforehand.
-    """),
-            noise_seed,
-            mo.image(src=to_pil_image(noise_preview)),
-        ],
-        align="center",
-    )
-
-    return image_tensor, img_np
-
-
-@app.cell(hide_code=True)
-def _(
-    grid_html,
-    grid_size,
-    img_np,
-    mo,
-    patch_size,
-    plt,
-    pos_embed,
-    row_slider,
-):
-    _columns = [
-        mo.vstack(
-            [mo.md("Noise Patch"), mo.md("Positional embedding")],
-            justify="space-around",
-        )
-    ]
-    for _c in range(grid_size):
-        _patch = img_np[
-            row_slider.value * patch_size : (row_slider.value + 1) * patch_size,
-            _c * patch_size : (_c + 1) * patch_size,
-            :,
-        ]
-        _fig_pa, _ax_pa = plt.subplots(figsize=(1, 1))
-        _ax_pa.imshow(_patch, aspect="auto")
-        _ax_pa.set_xticks([])
-        _ax_pa.set_yticks([])
-        _fig_pa.tight_layout(pad=0.05)
-        _patch_html = mo.as_html(_fig_pa)
-        plt.close(_fig_pa)
-
-        _pe_vec = pos_embed[row_slider.value, _c, :].reshape(24, 32)
-        _fig_pe, _ax_pe = plt.subplots(figsize=(24 / 32, 1))
-        _ax_pe.imshow(_pe_vec, cmap="turbo", aspect="auto")
-        _ax_pe.set_xticks([])
-        _ax_pe.set_yticks([])
-        _fig_pe.tight_layout(pad=0.05)
-        _pe_html = mo.as_html(_fig_pe)
-        plt.close(_fig_pe)
-
-        _columns.append(
-            mo.vstack([_patch_html, _pe_html], align="center", gap="0.15rem")
-        )
-
-    mo.vstack(
-        [
-            mo.md(
-                f"The image is separated into a {grid_size}×{grid_size} grid of {patch_size}×{patch_size} patches. Each patch is flattened into a token, and associated with a positional embedding so the Transformer knows where each patch came from."
-            ),
-            mo.hstack(
-                [
-                    grid_html.style(
-                        {
-                            "width": "5in",
-                            "height": "5in",
-                        }
-                    ),
-                    row_slider,
-                ],
-                align="center",
-            ),
-            mo.md(
-                f"Below is one full row of ${patch_size} \\times {patch_size}$ patches with each its 2D sincos positional embedding."
-            ),
-            mo.md(
-                "The embeddings are $\mathbb{{R}}^{{768}}$ vectors reshaped into a $24 \\times 32$ images."
-            ),
-            mo.hstack(_columns, justify="center"),
-        ],
-        align="center",
-    )
-
-    return
-
-
-@app.cell(hide_code=True)
 def _(mo):
-    mo.md("""
+    mo.md(r"""
     ### Timestep & class conditioning
 
     JiT conditions the denoiser on the timestep $t$ using a sinusoidal frequency embedding.<br>
     The embedding is a 256-dim vector built from $\sin$/$\cos$ at geometrically spaced frequencies of $t$.
 
-    Class labels are conditioned via a learned embedding table during training. Each class embedding is 768-dim vector.<br>
-    The class embeddings below are reshaped into $32 \times 24$ images.
+    Class labels are conditioned via a learned embedding table during training. Each class embedding is a 768-dim vector.<br>
+    The class embeddings below are reshaped into $24 \times 32$ images.
     """)
     return
 
@@ -1932,7 +1871,6 @@ def time_embed_vis(
         ],
         align="center",
     )
-
     return
 
 
@@ -1946,17 +1884,16 @@ def time_embed_slider_def(mo):
         label="Timestep $t$",
         show_value=False,
     )
-
     return (time_embed_slider,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Letting JiT denoising the noise
+    ### Letting JiT denoise the noise
 
-    For each class label, we feed the patches and the embeddings to JiT-B/16 and take the resulting (slightly) denoised image $z_{t+1}$ and repeat the process until we get the image $z_T$.
-    At every denoising step, we capture the image $z_t$. This allows us to build a trajectory of the image that projected on a 2D place with [UMAP](https://umap-learn.readthedocs.io/en/latest/).
+    For each class label, we feed the patches and the embeddings to JiT-B/16 and take the resulting (slightly) denoised image $z_{t+1}$, then repeat the process until we get the final image $z_T$.
+    At every denoising step, we capture the image $z_t$. This lets us build a trajectory of the image, which is then projected onto a 2D plane with [UMAP](https://umap-learn.readthedocs.io/en/latest/).
     """)
     return
 
@@ -2070,11 +2007,11 @@ def _(
         for class_id, class_name in CLASSES.items():
             _spinner.update(f"Generating trajectory for {class_name}...")
 
-            historique = []
+            history = []
 
             def hook(module, args_in):
                 # Save just the single batch item to CPU to avoid VRAM hoarding
-                historique.append(args_in[0][0:1].detach().clone().cpu())
+                history.append(args_in[0][0:1].detach().clone().cpu())
 
             handle = denoiser.net.register_forward_pre_hook(hook)
 
@@ -2083,18 +2020,18 @@ def _(
                 final = denoiser.generate(labels, z=image_tensor)
 
             handle.remove()
-            historique.append(final[0:1].cpu())
+            history.append(final[0:1].cpu())
 
             if N_steps == 0:
-                N_steps = len(historique)
+                N_steps = len(history)
 
             # Flatten for UMAP
-            flat = np.stack([h.flatten().numpy() for h in historique])
+            flat = np.stack([h.flatten().numpy() for h in history])
             all_frames_flat[class_id] = flat
 
             # Extract thumbnails
             thumbs = []
-            for t in historique[::THUMB_EVERY]:
+            for t in history[::THUMB_EVERY]:
                 arr = t[0].numpy().transpose(1, 2, 0)
                 arr = ((arr + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
                 img = Image.fromarray(arr).resize(
@@ -2103,9 +2040,11 @@ def _(
                 thumbs.append(np.array(img))
             all_thumbs[class_id] = np.stack(thumbs)
 
-            # Sigmas
+            # Remaining noise fraction at each captured step. Under the flow
+            # schedule z_t = t*x + (1-t)*eps, the noise coefficient is (1-t),
+            # so this runs a truthful 100% -> 0% across the trajectory.
             t_vals = np.linspace(0, 1, N_steps)
-            all_sigmas[class_id] = np.exp(-2.5 * t_vals**2)
+            all_sigmas[class_id] = 1 - t_vals
 
             # Clear the VRAM aggressively after each class
             torch.cuda.empty_cache()
@@ -2129,7 +2068,6 @@ def _(
             data[class_id] = (coords_2d, all_thumbs[class_id], all_sigmas[class_id])
 
     N = N_steps
-
     return N, data
 
 
@@ -2283,7 +2221,6 @@ def _(
         ],
         align="center",
     )
-
     return
 
 
@@ -2308,9 +2245,9 @@ def _(CLASSES, CLASS_COLORS, N, data, mo, np, plt, speeds_all, step_slider):
             range(len(_sp)), _sp, color=_c1, linewidth=1.8, alpha=0.9, label=_cname
         )
     _ax_v.axvline(_step_v, color="black", linestyle=":", linewidth=1.2, alpha=0.6)
-    _ax_v.set_title("Velocity $‖\Delta x_t‖$ in UMAP space", fontsize=10, loc="left")
+    _ax_v.set_title(r"Velocity $‖\Delta x_t‖$ in UMAP space", fontsize=10, loc="left")
     _ax_v.set_xlabel("Step", fontsize=9)
-    _ax_v.set_ylabel("$‖\Delta x‖$", fontsize=9)
+    _ax_v.set_ylabel(r"$‖\Delta x‖$", fontsize=9)
     _ax_v.set_xlim(0, _x_max)
     _ax_v.set_ylim(0, _y_max)
     _ax_v.grid(True, alpha=0.25)
@@ -2357,7 +2294,6 @@ def _(CLASSES, CLASS_COLORS, N, data, mo, np, plt, speeds_all, step_slider):
         ],
         align="center",
     )
-
     return
 
 
@@ -2413,14 +2349,13 @@ def _(CLASSES, N, THUMB_EVERY, class_checkboxes, mo, thumbs_b64):
     mo.vstack(
         [
             mo.md(
-                """### Filmstrip
-                A sampled sequence of frames from each class's denoising trajectory from pure noise to the final generated image.
+                """### Filmstrips
+                Sampled sequences of frames from each class's denoising trajectory from pure noise to the final generated image.
                 """
             ),
             mo.vstack(_rows, align="center"),
         ],
     )
-
     return
 
 
@@ -2475,7 +2410,7 @@ def _(nn, np, pi, rearrange, repeat, torch):
                     theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim)
                 )
             elif freqs_for == "pixel":
-                freqs = torch.linspace(1.0, max_freq / 2, dim // 2) * pi
+                freqs = torch.linspace(1.0, max_freq / 2, dim // 2) * torch.pi
             elif freqs_for == "constant":
                 freqs = torch.ones(num_freqs).float()
             else:
@@ -3219,7 +3154,6 @@ def load_denoiser(Args, Denoiser, mo, model_path, torch):
     cleaned = {k[4:] if k.startswith("net.") else k: v for k, v in state_dict.items()}
     denoiser.net.load_state_dict(cleaned, strict=True)
     denoiser.eval()
-
     return denoiser, device
 
 
@@ -3264,7 +3198,6 @@ def _(CLASSES, mo):
         value=list(CLASSES.values()),
         label="Visible classes",
     )
-
     return (class_checkboxes,)
 
 
